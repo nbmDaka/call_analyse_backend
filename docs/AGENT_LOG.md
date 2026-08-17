@@ -13,6 +13,17 @@ record will be stored in `docs/agent-runs/` and the requested implementer report
   intentionally emit JSON startup errors until later runtime wiring tasks exist.
 - No Git commit or push was created.
 
+## 2026-08-17 — Frontend MVP vertical slice
+
+- Implemented the companion React/TypeScript/Vite frontend with authenticated session
+  handling, dashboard, calls list, audio upload, status polling, call detail, score,
+  criteria, analysis insights, and transcript views.
+- Added API-client normalization for both frontend-style and Go default exported-field
+  response names, plus refresh-once behavior after a 401 response.
+- Frontend `npm test` passed (3 tests), `npm run typecheck` passed, and `npm run build`
+  passed. Browser smoke testing was not run.
+- No Git commit or push was created.
+
 ## 2026-08-14 18:30 — Task 8 HTTP and API runtime
 
 - Added request-ID/logging middleware, sanitized JSON errors, auth, call upload/list/detail,

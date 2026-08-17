@@ -22,3 +22,6 @@ API ---- PostgreSQL
 `internal/dashboard`, and `internal/httpapi` are implemented. API startup wires the
 real services and gracefully shuts down; worker startup owns asynchronous processing
 and persisted checkpoints.
+
+The companion `call_analyse_frontend` repository is a React/TypeScript client using
+the REST API, TanStack Query for server state, and React state for local UI state.

@@ -22,3 +22,7 @@ Calls require `Authorization: Bearer <access-token>`:
 
 `GET /api/v1/dashboard/summary` returns scoped total, completed, failed, and average-score
 aggregates. Managers see their calls, supervisors their managers' calls, and admins all calls.
+
+The companion frontend consumes these routes directly, normalizes the Go default
+exported-field names in call responses, and does not calculate scores or enforce
+permissions client-side.

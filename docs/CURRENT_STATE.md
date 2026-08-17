@@ -55,3 +55,8 @@ Task 8 focused HTTP/dashboard tests and the full Go test, vet, and build checks
 passed. No Docker runtime smoke test, live PostgreSQL or MinIO integration, Redis
 enqueue, or real Gemini call has been performed. `git diff --check` still reports
 pre-existing trailing whitespace in the approved plan/spec documents.
+
+The companion `call_analyse_frontend` repository now consumes the implemented auth,
+dashboard, calls, upload, and call-detail API vertical slice. Frontend verification
+and browser smoke testing remain separate from backend runtime checks; the MVP client
+uses localStorage for its token session and polls non-terminal call details.
