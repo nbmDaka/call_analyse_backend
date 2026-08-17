@@ -27,9 +27,10 @@ const (
 type Config struct {
 	AppEnv string
 
-	HTTPPort    int
-	DatabaseURL string
-	RedisAddr   string
+	HTTPPort           int
+	CORSAllowedOrigins []string
+	DatabaseURL        string
+	RedisAddr          string
 
 	MinIOEndpoint  string
 	MinIOAccessKey string
@@ -112,9 +113,10 @@ func Load() (Config, error) {
 	return Config{
 		AppEnv: appEnv,
 
-		HTTPPort:    httpPort,
-		DatabaseURL: os.Getenv("DATABASE_URL"),
-		RedisAddr:   envOrDefault("REDIS_ADDR", defaultRedisAddr),
+		HTTPPort:           httpPort,
+		CORSAllowedOrigins: parseCSV(envOrDefault("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")),
+		DatabaseURL:        os.Getenv("DATABASE_URL"),
+		RedisAddr:          envOrDefault("REDIS_ADDR", defaultRedisAddr),
 
 		MinIOEndpoint:  envOrDefault("MINIO_ENDPOINT", defaultMinIOHost),
 		MinIOAccessKey: os.Getenv("MINIO_ACCESS_KEY"),
@@ -138,6 +140,16 @@ func Load() (Config, error) {
 		BootstrapAdminEmail:    os.Getenv("BOOTSTRAP_ADMIN_EMAIL"),
 		BootstrapAdminPassword: os.Getenv("BOOTSTRAP_ADMIN_PASSWORD"),
 	}, nil
+}
+
+func parseCSV(value string) []string {
+	var values []string
+	for _, item := range strings.Split(value, ",") {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			values = append(values, trimmed)
+		}
+	}
+	return values
 }
 
 func resolveAIMode(appEnv, requestedMode, geminiAPIKey string) (string, error) {

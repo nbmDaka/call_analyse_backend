@@ -26,3 +26,7 @@ aggregates. Managers see their calls, supervisors their managers' calls, and adm
 The companion frontend consumes these routes directly, normalizes the Go default
 exported-field names in call responses, and does not calculate scores or enforce
 permissions client-side.
+
+For separate local frontend development, `CORS_ALLOWED_ORIGINS` configures the
+allowlist for browser origins such as `http://localhost:5173` and
+`http://127.0.0.1:5173`. Preflight requests allow `Authorization` and `Content-Type`.

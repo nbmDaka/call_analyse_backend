@@ -32,15 +32,16 @@ type dashboardService interface {
 
 // Dependencies are the application boundaries required by the HTTP layer.
 type Dependencies struct {
-	Authentication authService
-	Calls          callsService
-	Dashboard      dashboardService
-	Tokens         auth.TokenManager
-	EnqueueCall    func(context.Context, string) error
-	Ready          func(context.Context) error
-	MaxUploadBytes int64
-	RequestTimeout time.Duration
-	Logger         *slog.Logger
+	Authentication     authService
+	CORSAllowedOrigins []string
+	Calls              callsService
+	Dashboard          dashboardService
+	Tokens             auth.TokenManager
+	EnqueueCall        func(context.Context, string) error
+	Ready              func(context.Context) error
+	MaxUploadBytes     int64
+	RequestTimeout     time.Duration
+	Logger             *slog.Logger
 }
 
 type server struct {

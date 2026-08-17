@@ -16,6 +16,9 @@ func TestLoadUsesDevelopmentSafeDefaults(t *testing.T) {
 	if cfg.HTTPPort != 8080 {
 		t.Errorf("HTTPPort = %d, want 8080", cfg.HTTPPort)
 	}
+	if len(cfg.CORSAllowedOrigins) != 2 || cfg.CORSAllowedOrigins[0] != "http://localhost:5173" {
+		t.Errorf("CORSAllowedOrigins = %#v, want local frontend origins", cfg.CORSAllowedOrigins)
+	}
 	if cfg.MaxUploadBytes != 100*1024*1024 {
 		t.Errorf("MaxUploadBytes = %d, want %d", cfg.MaxUploadBytes, 100*1024*1024)
 	}
@@ -178,7 +181,7 @@ func TestLoadDoesNotProvideDefaultDatabaseOrMinIOCredentials(t *testing.T) {
 func setTestEnvironment(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
-		"APP_ENV", "HTTP_PORT", "DATABASE_URL", "REDIS_ADDR",
+		"APP_ENV", "HTTP_PORT", "DATABASE_URL", "REDIS_ADDR", "CORS_ALLOWED_ORIGINS",
 		"MINIO_ENDPOINT", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "MINIO_BUCKET", "MINIO_USE_SSL",
 		"JWT_ACCESS_SECRET", "JWT_REFRESH_SECRET", "JWT_ACCESS_TTL", "JWT_REFRESH_TTL",
 		"GEMINI_API_KEY", "GEMINI_TRANSCRIPTION_MODEL", "GEMINI_ANALYSIS_MODEL", "AI_MODE",

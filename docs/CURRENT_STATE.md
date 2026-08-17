@@ -60,3 +60,5 @@ The companion `call_analyse_frontend` repository now consumes the implemented au
 dashboard, calls, upload, and call-detail API vertical slice. Frontend verification
 and browser smoke testing remain separate from backend runtime checks; the MVP client
 uses localStorage for its token session and polls non-terminal call details.
+The API also exposes a configured CORS allowlist for the separate Vite development
+origin, and the frontend deduplicates concurrent refresh requests.

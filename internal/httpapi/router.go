@@ -19,6 +19,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logging(deps.Logger))
 	r.Use(middleware.WithTimeout(deps.RequestTimeout))
+	r.Use(cors(deps.CORSAllowedOrigins))
 	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
 		writeJSONError(w, req, http.StatusNotFound, "NOT_FOUND", "resource not found")
 	})

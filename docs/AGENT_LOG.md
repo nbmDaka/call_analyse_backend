@@ -13,6 +13,18 @@ record will be stored in `docs/agent-runs/` and the requested implementer report
   intentionally emit JSON startup errors until later runtime wiring tasks exist.
 - No Git commit or push was created.
 
+## 2026-08-17 — Final full-stack review fixes
+
+- Review found and fixed concurrent refresh-token rotation races in the frontend API
+  client by sharing one in-flight refresh promise across parallel 401 responses.
+- Review found and fixed separate-dev-origin browser access by adding a configurable
+  backend CORS allowlist and local Vite-origin defaults, including preflight tests.
+- Supervisor upload actions are now hidden and direct upload navigation redirects to
+  calls; manager and admin retain upload access consistent with backend policy.
+- Login return paths are restricted to safe internal paths to avoid open-redirect
+  behavior through crafted navigation state.
+- No unrelated refactor, commit, or push was performed.
+
 ## 2026-08-17 — Frontend MVP vertical slice
 
 - Implemented the companion React/TypeScript/Vite frontend with authenticated session

@@ -84,7 +84,7 @@ func main() {
 		}
 		return objects.Ready(readyCtx)
 	}
-	handler := httpapi.NewRouter(httpapi.Dependencies{Authentication: authService, Calls: callService, Dashboard: dashboardService, Tokens: tokens, EnqueueCall: enqueue, Ready: ready, MaxUploadBytes: cfg.MaxUploadBytes, RequestTimeout: cfg.ProviderTimeout, Logger: logger})
+	handler := httpapi.NewRouter(httpapi.Dependencies{Authentication: authService, CORSAllowedOrigins: cfg.CORSAllowedOrigins, Calls: callService, Dashboard: dashboardService, Tokens: tokens, EnqueueCall: enqueue, Ready: ready, MaxUploadBytes: cfg.MaxUploadBytes, RequestTimeout: cfg.ProviderTimeout, Logger: logger})
 	httpServer := &http.Server{Addr: fmt.Sprintf(":%d", cfg.HTTPPort), Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if serveErr := httpServer.ListenAndServe(); serveErr != nil && serveErr != http.ErrServerClosed {
