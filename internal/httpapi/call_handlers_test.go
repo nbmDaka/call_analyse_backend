@@ -290,6 +290,8 @@ func TestDashboardSummaryIsScopedByAuthenticatedActor(t *testing.T) {
 type fakeAuthService struct {
 	loginPair     auth.TokenPair
 	loginErr      error
+	registerPair  auth.TokenPair
+	registerErr   error
 	refreshPair   auth.TokenPair
 	refreshErr    error
 	logoutErr     error
@@ -297,6 +299,8 @@ type fakeAuthService struct {
 	meErr         error
 	loginEmail    string
 	loginPassword string
+	registerEmail string
+	registerPassword string
 	refreshToken  string
 	logoutToken   string
 	meID          uuid.UUID
@@ -305,6 +309,11 @@ type fakeAuthService struct {
 func (s *fakeAuthService) Login(_ context.Context, email, password string) (auth.TokenPair, error) {
 	s.loginEmail, s.loginPassword = email, password
 	return s.loginPair, s.loginErr
+}
+
+func (s *fakeAuthService) Register(_ context.Context, email, password string) (auth.TokenPair, error) {
+	s.registerEmail, s.registerPassword = email, password
+	return s.registerPair, s.registerErr
 }
 
 func (s *fakeAuthService) Refresh(_ context.Context, token string) (auth.TokenPair, error) {

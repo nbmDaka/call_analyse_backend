@@ -15,6 +15,7 @@ import (
 
 type authService interface {
 	Login(context.Context, string, string) (auth.TokenPair, error)
+	Register(context.Context, string, string) (auth.TokenPair, error)
 	Refresh(context.Context, string) (auth.TokenPair, error)
 	Logout(context.Context, string) error
 	Me(context.Context, uuid.UUID) (auth.PublicUser, error)

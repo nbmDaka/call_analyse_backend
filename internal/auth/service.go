@@ -31,6 +31,29 @@ func (s Service) Login(ctx context.Context, email, password string) (TokenPair, 
 	return s.issuePair(ctx, user, "")
 }
 
+// Register creates a new manager user and returns a token pair upon success.
+func (s Service) Register(ctx context.Context, email, password string) (TokenPair, error) {
+	email = normalizeEmail(email)
+	if email == "" || password == "" {
+		return TokenPair{}, errors.New("email and password are required")
+	}
+	hash, err := s.password.Hash(password)
+	if err != nil {
+		return TokenPair{}, fmt.Errorf("hash password: %w", err)
+	}
+	user, err := s.users.Create(ctx, User{
+		ID:           uuid.New(),
+		Email:        email,
+		PasswordHash: hash,
+		Role:         RoleManager,
+	})
+	if err != nil {
+		return TokenPair{}, err
+	}
+	return s.issuePair(ctx, user, "")
+}
+
+
 // Refresh validates the refresh JWT and atomically replaces its server-side session.
 func (s Service) Refresh(ctx context.Context, rawToken string) (TokenPair, error) {
 	claims, err := s.tokens.ParseRefresh(rawToken)

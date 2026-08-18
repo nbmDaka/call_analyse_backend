@@ -30,6 +30,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	r.Get("/health/ready", s.healthReady)
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Post("/auth/login", s.login)
+		api.Post("/auth/register", s.register)
 		api.Post("/auth/refresh", s.refresh)
 		api.Post("/auth/logout", s.logout)
 		api.Group(func(protected chi.Router) {

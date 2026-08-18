@@ -111,6 +111,36 @@ func requirePublicUser(t *testing.T, user PublicUser) {
 	t.Helper()
 }
 
+func TestServiceRegisterCreatesNewUserAndReturnsTokens(t *testing.T) {
+	ctx := context.Background()
+	hasher := NewPasswordHasher()
+	tokens := mustNewTokenManager(t, time.Hour, 24*time.Hour)
+	users := &fakeUserStore{byEmail: map[string]User{}, byID: map[uuid.UUID]User{}}
+	refreshes := &fakeRefreshStore{tokens: map[string]RefreshToken{}}
+	service := NewService(users, refreshes, hasher, tokens)
+
+	pair, err := service.Register(ctx, "newuser@example.com", "secret123")
+	if err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if pair.AccessToken == "" || pair.RefreshToken == "" {
+		t.Fatalf("Register() returned empty tokens: %+v", pair)
+	}
+
+	createdUser, exists := users.byEmail["newuser@example.com"]
+	if !exists {
+		t.Fatalf("User was not saved in store")
+	}
+	if createdUser.Role != RoleManager {
+		t.Fatalf("User role = %v, want manager", createdUser.Role)
+	}
+
+	// Duplicate registration attempt
+	if _, err := service.Register(ctx, "newuser@example.com", "secret123"); !errors.Is(err, ErrEmailAlreadyExists) {
+		t.Fatalf("Register() duplicate error = %v, want ErrEmailAlreadyExists", err)
+	}
+}
+
 func authenticatedServiceFixture(t *testing.T) (User, Service, TokenManager, *fakeRefreshStore) {
 	t.Helper()
 	user := User{ID: uuid.New(), Email: "manager@example.com", Role: RoleManager}

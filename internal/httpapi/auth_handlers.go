@@ -27,6 +27,24 @@ func (s server) login(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"access_token": pair.AccessToken, "refresh_token": pair.RefreshToken})
 }
 
+func (s server) register(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Authentication == nil {
+		writeError(w, r, errors.New("authentication service is not configured"))
+		return
+	}
+	var input struct{ Email, Password string }
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil || input.Email == "" || input.Password == "" {
+		writeInvalid(w, r, "email and password are required")
+		return
+	}
+	pair, err := s.deps.Authentication.Register(r.Context(), input.Email, input.Password)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"access_token": pair.AccessToken, "refresh_token": pair.RefreshToken})
+}
+
 func (s server) refresh(w http.ResponseWriter, r *http.Request) {
 	if s.deps.Authentication == nil {
 		writeError(w, r, errors.New("authentication service is not configured"))
