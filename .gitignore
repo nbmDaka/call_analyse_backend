@@ -1,0 +1,33 @@
+# Environment variables
+.env
+.env.local
+*.env
+!.env.example
+
+# Binaries & Executables
+/api
+/worker
+/migrate
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/bin/
+/tmp/
+
+# Go build & test artifacts
+*.out
+coverage.txt
+coverage.html
+
+# IDE & Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Operating System files
+.DS_Store
+Thumbs.db
