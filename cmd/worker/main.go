@@ -8,15 +8,15 @@ import (
 	"os/signal"
 	"syscall"
 
-	"call_analyse_backend/internal/analysis"
-	"call_analyse_backend/internal/calls"
+	"call_analyse_backend/internal/modules/analysis"
+	"call_analyse_backend/internal/modules/calls"
 	"call_analyse_backend/internal/config"
-	"call_analyse_backend/internal/database"
-	"call_analyse_backend/internal/providers"
-	"call_analyse_backend/internal/queue"
-	"call_analyse_backend/internal/storage"
-	"call_analyse_backend/internal/transcription"
-	"call_analyse_backend/internal/worker"
+	"call_analyse_backend/internal/platform/database"
+	"call_analyse_backend/internal/integrations/ai"
+	"call_analyse_backend/internal/platform/queue"
+	"call_analyse_backend/internal/platform/storage"
+	"call_analyse_backend/internal/modules/transcription"
+	"call_analyse_backend/internal/jobs"
 
 	"github.com/hibiken/asynq"
 )

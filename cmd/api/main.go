@@ -10,14 +10,14 @@ import (
 	"syscall"
 	"time"
 
-	"call_analyse_backend/internal/auth"
-	"call_analyse_backend/internal/calls"
+	"call_analyse_backend/internal/modules/auth"
+	"call_analyse_backend/internal/modules/calls"
 	"call_analyse_backend/internal/config"
-	"call_analyse_backend/internal/dashboard"
-	"call_analyse_backend/internal/database"
-	"call_analyse_backend/internal/httpapi"
-	"call_analyse_backend/internal/queue"
-	"call_analyse_backend/internal/storage"
+	"call_analyse_backend/internal/modules/dashboard"
+	"call_analyse_backend/internal/platform/database"
+	"call_analyse_backend/internal/transport/http"
+	"call_analyse_backend/internal/platform/queue"
+	"call_analyse_backend/internal/platform/storage"
 	"github.com/hibiken/asynq"
 )
 

@@ -8,7 +8,7 @@ import (
 	"syscall"
 
 	"call_analyse_backend/internal/config"
-	"call_analyse_backend/internal/database"
+	"call_analyse_backend/internal/platform/database"
 	"call_analyse_backend/migrations"
 )
 

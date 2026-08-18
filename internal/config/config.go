@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"call_analyse_backend/internal/auth"
+	"call_analyse_backend/internal/modules/auth"
 )
 
 const (
