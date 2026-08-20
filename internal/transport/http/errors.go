@@ -31,6 +31,12 @@ func mapError(err error) apiError {
 	switch {
 	case errors.Is(err, middleware.ErrUnauthenticated), errors.Is(err, auth.ErrInvalidCredentials), errors.Is(err, auth.ErrInvalidRefreshToken):
 		return apiError{http.StatusUnauthorized, "UNAUTHENTICATED", "authentication required"}
+	case errors.Is(err, auth.ErrEmailNotVerified):
+		return apiError{http.StatusForbidden, "EMAIL_NOT_VERIFIED", "email verification is required"}
+	case errors.Is(err, auth.ErrInvalidActionToken):
+		return apiError{http.StatusBadRequest, "INVALID_TOKEN", "link is invalid or expired"}
+	case errors.Is(err, auth.ErrEmailServiceUnavailable):
+		return apiError{http.StatusServiceUnavailable, "EMAIL_SERVICE_UNAVAILABLE", "email service is unavailable"}
 	case errors.Is(err, calls.ErrCallNotFound):
 		return apiError{http.StatusNotFound, "CALL_NOT_FOUND", "call not found"}
 	case errors.Is(err, calls.ErrInvalidActor):

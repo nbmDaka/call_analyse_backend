@@ -15,7 +15,11 @@ import (
 
 type authService interface {
 	Login(context.Context, string, string) (auth.TokenPair, error)
-	Register(context.Context, string, string) (auth.TokenPair, error)
+	Register(context.Context, string, string) error
+	ConfirmEmail(context.Context, string) error
+	ResendVerification(context.Context, string) error
+	RequestPasswordReset(context.Context, string) error
+	ResetPassword(context.Context, string, string) error
 	Refresh(context.Context, string) (auth.TokenPair, error)
 	Logout(context.Context, string) error
 	Me(context.Context, uuid.UUID) (auth.PublicUser, error)

@@ -10,14 +10,15 @@ import (
 	"syscall"
 	"time"
 
+	"call_analyse_backend/internal/config"
+	"call_analyse_backend/internal/integrations/email"
 	"call_analyse_backend/internal/modules/auth"
 	"call_analyse_backend/internal/modules/calls"
-	"call_analyse_backend/internal/config"
 	"call_analyse_backend/internal/modules/dashboard"
 	"call_analyse_backend/internal/platform/database"
-	"call_analyse_backend/internal/transport/http"
 	"call_analyse_backend/internal/platform/queue"
 	"call_analyse_backend/internal/platform/storage"
+	"call_analyse_backend/internal/transport/http"
 	"github.com/hibiken/asynq"
 )
 
@@ -54,7 +55,8 @@ func main() {
 		os.Exit(1)
 	}
 	authStore := auth.NewPostgresStore(pool)
-	authService := auth.NewService(authStore, authStore, auth.NewPasswordHasher(), tokens)
+	mailer := email.NewResendSender(cfg.ResendAPIKey, cfg.EmailFrom, cfg.ProviderTimeout)
+	authService := auth.NewServiceWithEmail(authStore, authStore, auth.NewPasswordHasher(), tokens, authStore, mailer, cfg.FrontendURL, cfg.EmailVerificationTTL, cfg.PasswordResetTTL)
 	if cfg.BootstrapAdminEmail != "" && cfg.BootstrapAdminPassword != "" {
 		if _, _, err := authService.BootstrapAdmin(ctx, cfg.BootstrapAdminEmail, cfg.BootstrapAdminPassword); err != nil {
 			logger.Error("API bootstrap admin failed", "error", err)

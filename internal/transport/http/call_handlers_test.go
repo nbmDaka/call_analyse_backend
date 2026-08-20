@@ -288,22 +288,22 @@ func TestDashboardSummaryIsScopedByAuthenticatedActor(t *testing.T) {
 }
 
 type fakeAuthService struct {
-	loginPair     auth.TokenPair
-	loginErr      error
-	registerPair  auth.TokenPair
-	registerErr   error
-	refreshPair   auth.TokenPair
-	refreshErr    error
-	logoutErr     error
-	meUser        auth.PublicUser
-	meErr         error
-	loginEmail    string
-	loginPassword string
-	registerEmail string
+	loginPair        auth.TokenPair
+	loginErr         error
+	registerPair     auth.TokenPair
+	registerErr      error
+	refreshPair      auth.TokenPair
+	refreshErr       error
+	logoutErr        error
+	meUser           auth.PublicUser
+	meErr            error
+	loginEmail       string
+	loginPassword    string
+	registerEmail    string
 	registerPassword string
-	refreshToken  string
-	logoutToken   string
-	meID          uuid.UUID
+	refreshToken     string
+	logoutToken      string
+	meID             uuid.UUID
 }
 
 func (s *fakeAuthService) Login(_ context.Context, email, password string) (auth.TokenPair, error) {
@@ -311,10 +311,18 @@ func (s *fakeAuthService) Login(_ context.Context, email, password string) (auth
 	return s.loginPair, s.loginErr
 }
 
-func (s *fakeAuthService) Register(_ context.Context, email, password string) (auth.TokenPair, error) {
+func (s *fakeAuthService) Register(_ context.Context, email, password string) error {
 	s.registerEmail, s.registerPassword = email, password
-	return s.registerPair, s.registerErr
+	return s.registerErr
 }
+
+func (s *fakeAuthService) ConfirmEmail(context.Context, string) error { return nil }
+
+func (s *fakeAuthService) ResendVerification(context.Context, string) error { return nil }
+
+func (s *fakeAuthService) RequestPasswordReset(context.Context, string) error { return nil }
+
+func (s *fakeAuthService) ResetPassword(context.Context, string, string) error { return nil }
 
 func (s *fakeAuthService) Refresh(_ context.Context, token string) (auth.TokenPair, error) {
 	s.refreshToken = token

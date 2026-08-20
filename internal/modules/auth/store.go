@@ -23,22 +23,22 @@ func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
 
 func (s *PostgresStore) FindByEmail(ctx context.Context, email string) (User, error) {
 	return scanUser(s.pool.QueryRow(ctx, `
-SELECT id, email, password_hash, role, supervisor_id, created_at, updated_at
+SELECT id, email, password_hash, role, supervisor_id, email_verified_at, created_at, updated_at
 FROM users WHERE email = $1`, email))
 }
 
 func (s *PostgresStore) FindByID(ctx context.Context, id uuid.UUID) (User, error) {
 	return scanUser(s.pool.QueryRow(ctx, `
-SELECT id, email, password_hash, role, supervisor_id, created_at, updated_at
+SELECT id, email, password_hash, role, supervisor_id, email_verified_at, created_at, updated_at
 FROM users WHERE id = $1`, id))
 }
 
 func (s *PostgresStore) Create(ctx context.Context, user User) (User, error) {
 	created, err := scanUser(s.pool.QueryRow(ctx, `
-INSERT INTO users (id, email, password_hash, role, supervisor_id)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, email, password_hash, role, supervisor_id, created_at, updated_at`,
-		user.ID, user.Email, user.PasswordHash, user.Role, user.SupervisorID))
+INSERT INTO users (id, email, password_hash, role, supervisor_id, email_verified_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, email, password_hash, role, supervisor_id, email_verified_at, created_at, updated_at`,
+		user.ID, user.Email, user.PasswordHash, user.Role, user.SupervisorID, user.EmailVerifiedAt))
 	if isUniqueViolation(err) {
 		return User{}, ErrEmailAlreadyExists
 	}
@@ -108,6 +108,78 @@ WHERE token_hash = $1 AND revoked_at IS NULL`, hash)
 	return nil
 }
 
+func (s *PostgresStore) RevokeAllForUser(ctx context.Context, userID uuid.UUID) error {
+	_, err := s.pool.Exec(ctx, `
+UPDATE refresh_tokens SET revoked_at = NOW()
+WHERE user_id = $1 AND revoked_at IS NULL`, userID)
+	return err
+}
+
+func (s *PostgresStore) MarkEmailVerified(ctx context.Context, id uuid.UUID) error {
+	result, err := s.pool.Exec(ctx, `UPDATE users SET email_verified_at = COALESCE(email_verified_at, NOW()), updated_at = NOW() WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}
+
+func (s *PostgresStore) UpdatePassword(ctx context.Context, id uuid.UUID, passwordHash string) error {
+	result, err := s.pool.Exec(ctx, `UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1`, id, passwordHash)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}
+
+func (s *PostgresStore) CreateActionToken(ctx context.Context, token ActionToken) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin action token creation: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `DELETE FROM auth_action_tokens WHERE user_id = $1 AND purpose = $2 AND used_at IS NULL`, token.UserID, token.Purpose); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+INSERT INTO auth_action_tokens (id, user_id, purpose, token_hash, expires_at)
+VALUES ($1, $2, $3, $4, $5)`, token.ID, token.UserID, token.Purpose, token.TokenHash, token.ExpiresAt); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *PostgresStore) ConsumeActionToken(ctx context.Context, purpose ActionTokenPurpose, tokenHash string) (uuid.UUID, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	defer tx.Rollback(ctx)
+	var id, userID uuid.UUID
+	err = tx.QueryRow(ctx, `
+SELECT id, user_id FROM auth_action_tokens
+WHERE purpose = $1 AND token_hash = $2 AND used_at IS NULL AND expires_at > NOW()
+FOR UPDATE`, purpose, tokenHash).Scan(&id, &userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, ErrInvalidActionToken
+	}
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE auth_action_tokens SET used_at = NOW() WHERE id = $1`, id); err != nil {
+		return uuid.Nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return uuid.Nil, err
+	}
+	return userID, nil
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }
@@ -115,7 +187,7 @@ type rowScanner interface {
 func scanUser(row rowScanner) (User, error) {
 	var user User
 	var role string
-	err := row.Scan(&user.ID, &user.Email, &user.PasswordHash, &role, &user.SupervisorID, &user.CreatedAt, &user.UpdatedAt)
+	err := row.Scan(&user.ID, &user.Email, &user.PasswordHash, &role, &user.SupervisorID, &user.EmailVerifiedAt, &user.CreatedAt, &user.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrUserNotFound
 	}

@@ -51,6 +51,12 @@ type Config struct {
 	MaxUploadBytes  int64
 	ProviderTimeout time.Duration
 
+	ResendAPIKey         string
+	EmailFrom            string
+	FrontendURL          string
+	EmailVerificationTTL time.Duration
+	PasswordResetTTL     time.Duration
+
 	BootstrapAdminEmail    string
 	BootstrapAdminPassword string
 }
@@ -89,6 +95,17 @@ func Load() (Config, error) {
 	if providerTimeout <= 0 {
 		return Config{}, fmt.Errorf("provider duration must be greater than zero")
 	}
+	emailVerificationTTL, err := parseDuration("EMAIL_VERIFICATION_TTL", envOrDefault("EMAIL_VERIFICATION_TTL", "24h"))
+	if err != nil {
+		return Config{}, err
+	}
+	passwordResetTTL, err := parseDuration("PASSWORD_RESET_TTL", envOrDefault("PASSWORD_RESET_TTL", "1h"))
+	if err != nil {
+		return Config{}, err
+	}
+	if emailVerificationTTL <= 0 || passwordResetTTL <= 0 {
+		return Config{}, fmt.Errorf("email token TTLs must be greater than zero")
+	}
 
 	maxUploadBytes, err := parseInt64("MAX_UPLOAD_BYTES", envOrDefault("MAX_UPLOAD_BYTES", "104857600"))
 	if err != nil {
@@ -105,6 +122,12 @@ func Load() (Config, error) {
 	}
 
 	geminiAPIKey := os.Getenv("GEMINI_API_KEY")
+	resendAPIKey := os.Getenv("RESEND_API_KEY")
+	emailFrom := envOrDefault("EMAIL_FROM", "Call Analyse <no-reply@nbm-app.com>")
+	frontendURL := envOrDefault("FRONTEND_URL", "http://localhost:5173")
+	if appEnv == "production" && strings.TrimSpace(resendAPIKey) == "" {
+		return Config{}, fmt.Errorf("RESEND_API_KEY is required when APP_ENV=production")
+	}
 	aiMode, err := resolveAIMode(appEnv, envOrDefault("AI_MODE", AIModeAuto), geminiAPIKey)
 	if err != nil {
 		return Config{}, err
@@ -136,6 +159,12 @@ func Load() (Config, error) {
 
 		MaxUploadBytes:  maxUploadBytes,
 		ProviderTimeout: providerTimeout,
+
+		ResendAPIKey:         resendAPIKey,
+		EmailFrom:            emailFrom,
+		FrontendURL:          frontendURL,
+		EmailVerificationTTL: emailVerificationTTL,
+		PasswordResetTTL:     passwordResetTTL,
 
 		BootstrapAdminEmail:    os.Getenv("BOOTSTRAP_ADMIN_EMAIL"),
 		BootstrapAdminPassword: os.Getenv("BOOTSTRAP_ADMIN_PASSWORD"),

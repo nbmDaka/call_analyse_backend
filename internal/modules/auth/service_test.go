@@ -12,7 +12,8 @@ import (
 
 func TestServiceRefreshRotatesAndRevokesPreviousToken(t *testing.T) {
 	ctx := context.Background()
-	user := User{ID: uuid.New(), Email: "manager@example.com", Role: RoleManager}
+	verifiedAt := time.Now().UTC()
+	user := User{ID: uuid.New(), Email: "manager@example.com", Role: RoleManager, EmailVerifiedAt: &verifiedAt}
 	hasher := NewPasswordHasher()
 	passwordHash, err := hasher.Hash("password")
 	if err != nil {
@@ -119,12 +120,8 @@ func TestServiceRegisterCreatesNewUserAndReturnsTokens(t *testing.T) {
 	refreshes := &fakeRefreshStore{tokens: map[string]RefreshToken{}}
 	service := NewService(users, refreshes, hasher, tokens)
 
-	pair, err := service.Register(ctx, "newuser@example.com", "secret123")
-	if err != nil {
+	if err := service.Register(ctx, "newuser@example.com", "secret123"); err != nil {
 		t.Fatalf("Register() error = %v", err)
-	}
-	if pair.AccessToken == "" || pair.RefreshToken == "" {
-		t.Fatalf("Register() returned empty tokens: %+v", pair)
 	}
 
 	createdUser, exists := users.byEmail["newuser@example.com"]
@@ -136,14 +133,15 @@ func TestServiceRegisterCreatesNewUserAndReturnsTokens(t *testing.T) {
 	}
 
 	// Duplicate registration attempt
-	if _, err := service.Register(ctx, "newuser@example.com", "secret123"); !errors.Is(err, ErrEmailAlreadyExists) {
+	if err := service.Register(ctx, "newuser@example.com", "secret123"); !errors.Is(err, ErrEmailAlreadyExists) {
 		t.Fatalf("Register() duplicate error = %v, want ErrEmailAlreadyExists", err)
 	}
 }
 
 func authenticatedServiceFixture(t *testing.T) (User, Service, TokenManager, *fakeRefreshStore) {
 	t.Helper()
-	user := User{ID: uuid.New(), Email: "manager@example.com", Role: RoleManager}
+	verifiedAt := time.Now().UTC()
+	user := User{ID: uuid.New(), Email: "manager@example.com", Role: RoleManager, EmailVerifiedAt: &verifiedAt}
 	hasher := NewPasswordHasher()
 	passwordHash, err := hasher.Hash("password")
 	if err != nil {
@@ -186,6 +184,29 @@ func (s *fakeUserStore) Create(_ context.Context, user User) (User, error) {
 	return user, nil
 }
 
+func (s *fakeUserStore) MarkEmailVerified(_ context.Context, id uuid.UUID) error {
+	user, ok := s.byID[id]
+	if !ok {
+		return ErrUserNotFound
+	}
+	now := time.Now().UTC()
+	user.EmailVerifiedAt = &now
+	s.byID[id] = user
+	s.byEmail[user.Email] = user
+	return nil
+}
+
+func (s *fakeUserStore) UpdatePassword(_ context.Context, id uuid.UUID, passwordHash string) error {
+	user, ok := s.byID[id]
+	if !ok {
+		return ErrUserNotFound
+	}
+	user.PasswordHash = passwordHash
+	s.byID[id] = user
+	s.byEmail[user.Email] = user
+	return nil
+}
+
 type fakeRefreshStore struct {
 	tokens map[string]RefreshToken
 }
@@ -223,5 +244,16 @@ func (s *fakeRefreshStore) Revoke(_ context.Context, hash string) error {
 	now := time.Now().UTC()
 	token.RevokedAt = &now
 	s.tokens[hash] = token
+	return nil
+}
+
+func (s *fakeRefreshStore) RevokeAllForUser(_ context.Context, userID uuid.UUID) error {
+	now := time.Now().UTC()
+	for hash, token := range s.tokens {
+		if token.UserID == userID && token.RevokedAt == nil {
+			token.RevokedAt = &now
+			s.tokens[hash] = token
+		}
+	}
 	return nil
 }
