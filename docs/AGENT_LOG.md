@@ -114,3 +114,14 @@ record will be stored in `docs/agent-runs/` and the requested implementer report
 - Focused analysis/scoring tests, `go test ./...`, `go vet ./...`, and `go build ./...`
   passed. No real Gemini or database persistence was run.
 - No Git commit or push was created.
+
+## 2026-08-21 16:19 — Gemini model refresh
+
+- Replaced the retired `gemini-2.0-flash` defaults with `gemini-3.7-flash` for both
+  Gemini audio transcription and structured analysis.
+- Set the local ignored `.env` to explicit `AI_MODE=gemini`, rebuilt the API/worker
+  images, and restarted the Compose services with the configured Gemini key.
+- Added a configuration regression test. `go test ./...`, `go vet ./...`,
+  `go build ./...`, and Compose startup completed successfully; no real audio call
+  was submitted during verification.
+- No Git commit or push was created.

@@ -21,7 +21,8 @@
 - Shared analysis-provider contract plus deterministic fake analysis output for
   local development and worker tests.
 - Gemini HTTP adapters with configured models, explicit timeouts, and sanitized
-  provider errors; unit tests use only local `httptest` servers.
+  provider errors; unit tests use only local `httptest` servers. The default
+  `gemini-3.7-flash` model handles both audio transcription and structured analysis.
 - Stable Asynq `process_call` task construction with UUID payload validation,
   bounded retries, queue selection, and payload-derived uniqueness.
 - Strict analysis JSON parsing and backend-owned 0–100 score calculation are

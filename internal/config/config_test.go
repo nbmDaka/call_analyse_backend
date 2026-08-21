@@ -27,6 +27,24 @@ func TestLoadUsesDevelopmentSafeDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadUsesCurrentGeminiModelsByDefault(t *testing.T) {
+	setTestEnvironment(t)
+	t.Setenv("GEMINI_API_KEY", "test-gemini-key")
+	t.Setenv("AI_MODE", "gemini")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.GeminiTranscriptionModel != "gemini-3.7-flash" {
+		t.Errorf("GeminiTranscriptionModel = %q, want gemini-3.7-flash", cfg.GeminiTranscriptionModel)
+	}
+	if cfg.GeminiAnalysisModel != "gemini-3.7-flash" {
+		t.Errorf("GeminiAnalysisModel = %q, want gemini-3.7-flash", cfg.GeminiAnalysisModel)
+	}
+}
+
 func TestLoadParsesDurations(t *testing.T) {
 	setTestEnvironment(t)
 	t.Setenv("JWT_ACCESS_TTL", "20m")

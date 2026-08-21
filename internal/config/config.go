@@ -15,6 +15,8 @@ const (
 	AIModeAuto   = "auto"
 	AIModeFake   = "fake"
 	AIModeGemini = "gemini"
+
+	defaultGeminiModel = "gemini-3.7-flash"
 )
 
 const (
@@ -163,8 +165,8 @@ func Load() (Config, error) {
 		JWTRefreshTTL:    refreshTTL,
 
 		GeminiAPIKey:             geminiAPIKey,
-		GeminiTranscriptionModel: envOrDefault("GEMINI_TRANSCRIPTION_MODEL", "gemini-2.0-flash"),
-		GeminiAnalysisModel:      envOrDefault("GEMINI_ANALYSIS_MODEL", "gemini-2.0-flash"),
+		GeminiTranscriptionModel: envOrDefault("GEMINI_TRANSCRIPTION_MODEL", defaultGeminiModel),
+		GeminiAnalysisModel:      envOrDefault("GEMINI_ANALYSIS_MODEL", defaultGeminiModel),
 		AIMode:                   aiMode,
 
 		MaxUploadBytes:  maxUploadBytes,
