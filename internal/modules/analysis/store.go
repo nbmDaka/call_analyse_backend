@@ -50,9 +50,15 @@ func (s *PostgresStore) GetInWorkspace(ctx context.Context, workspaceID, callID 
 func (s *PostgresStore) get(ctx context.Context, workspaceID, callID uuid.UUID) (Analysis, scoring.Score, bool, error) {
 	var result Analysis
 	var needsJSON, objectionsJSON, mistakesJSON, strengthsJSON, criteriaJSON []byte
+	var speechJSON, violationsJSON, coachingJSON, roleJSON []byte
 	var rawJSON []byte
 	analysisQuery := `
-SELECT summary, needs, objections, refusal_reason, mistakes, strengths, next_action, criterion_results, COALESCE(raw_response, 'null'::jsonb)
+SELECT summary, needs, objections, refusal_reason, mistakes, strengths, next_action, criterion_results,
+       COALESCE(speech_analytics, '{}'::jsonb),
+       COALESCE(violations, '[]'::jsonb),
+       COALESCE(actionable_coaching, '[]'::jsonb),
+       COALESCE(role_mapping, '{}'::jsonb),
+       COALESCE(raw_response, 'null'::jsonb)
 FROM call_analyses a`
 	args := []any{callID}
 	if workspaceID == uuid.Nil {
@@ -61,7 +67,21 @@ FROM call_analyses a`
 		analysisQuery += " JOIN calls c ON c.id = a.call_id WHERE a.call_id = $1 AND c.workspace_id = $2"
 		args = append(args, workspaceID)
 	}
-	err := s.pool.QueryRow(ctx, analysisQuery, args...).Scan(&result.Summary, &needsJSON, &objectionsJSON, &result.RefusalReason, &mistakesJSON, &strengthsJSON, &result.NextAction, &criteriaJSON, &rawJSON)
+	err := s.pool.QueryRow(ctx, analysisQuery, args...).Scan(
+		&result.Summary,
+		&needsJSON,
+		&objectionsJSON,
+		&result.RefusalReason,
+		&mistakesJSON,
+		&strengthsJSON,
+		&result.NextAction,
+		&criteriaJSON,
+		&speechJSON,
+		&violationsJSON,
+		&coachingJSON,
+		&roleJSON,
+		&rawJSON,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Analysis{}, scoring.Score{}, false, nil
 	}
@@ -71,15 +91,45 @@ FROM call_analyses a`
 	for _, item := range []struct {
 		data   []byte
 		target any
-	}{{needsJSON, &result.Needs}, {objectionsJSON, &result.Objections}, {mistakesJSON, &result.Mistakes}, {strengthsJSON, &result.Strengths}} {
-		if err := json.Unmarshal(item.data, item.target); err != nil {
-			return Analysis{}, scoring.Score{}, false, fmt.Errorf("decode analysis: %w", err)
+	}{
+		{needsJSON, &result.Needs},
+		{objectionsJSON, &result.Objections},
+		{mistakesJSON, &result.Mistakes},
+		{strengthsJSON, &result.Strengths},
+		{violationsJSON, &result.Violations},
+		{coachingJSON, &result.ActionableCoaching},
+	} {
+		if len(item.data) > 0 {
+			if err := json.Unmarshal(item.data, item.target); err != nil {
+				return Analysis{}, scoring.Score{}, false, fmt.Errorf("decode analysis: %w", err)
+			}
 		}
 	}
-	if err := json.Unmarshal(criteriaJSON, &result.CriterionResults); err != nil {
-		return Analysis{}, scoring.Score{}, false, fmt.Errorf("decode criterion results: %w", err)
+	if len(criteriaJSON) > 0 {
+		if err := json.Unmarshal(criteriaJSON, &result.CriterionResults); err != nil {
+			return Analysis{}, scoring.Score{}, false, fmt.Errorf("decode criterion results: %w", err)
+		}
+	}
+	if len(speechJSON) > 0 && string(speechJSON) != "{}" && string(speechJSON) != "null" {
+		var speech SpeechAnalytics
+		if err := json.Unmarshal(speechJSON, &speech); err == nil {
+			result.SpeechAnalytics = &speech
+		}
+	}
+	if len(roleJSON) > 0 && string(roleJSON) != "{}" && string(roleJSON) != "null" {
+		var role RoleMapping
+		if err := json.Unmarshal(roleJSON, &role); err == nil {
+			result.RoleMapping = &role
+		}
+	}
+	if result.Violations == nil {
+		result.Violations = []Violation{}
+	}
+	if result.ActionableCoaching == nil {
+		result.ActionableCoaching = []string{}
 	}
 	result.RawJSON = rawJSON
+
 	var values [9]int
 	scoreQuery := `
 SELECT greeting_score, rapport_score, needs_discovery_score, presentation_score,
@@ -128,6 +178,22 @@ func (s *PostgresStore) UpsertWithScore(ctx context.Context, callID uuid.UUID, r
 	if err != nil {
 		return fmt.Errorf("encode criterion results: %w", err)
 	}
+	speechJSON, err := json.Marshal(result.SpeechAnalytics)
+	if err != nil || result.SpeechAnalytics == nil {
+		speechJSON = []byte("{}")
+	}
+	violationsJSON, err := json.Marshal(result.Violations)
+	if err != nil || result.Violations == nil {
+		violationsJSON = []byte("[]")
+	}
+	coachingJSON, err := json.Marshal(result.ActionableCoaching)
+	if err != nil || result.ActionableCoaching == nil {
+		coachingJSON = []byte("[]")
+	}
+	roleJSON, err := json.Marshal(result.RoleMapping)
+	if err != nil || result.RoleMapping == nil {
+		roleJSON = []byte("{}")
+	}
 
 	transaction, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -137,9 +203,10 @@ func (s *PostgresStore) UpsertWithScore(ctx context.Context, callID uuid.UUID, r
 
 	if _, err := transaction.Exec(ctx, `
 INSERT INTO call_analyses (
-    call_id, summary, needs, objections, refusal_reason, mistakes, strengths, next_action, criterion_results, raw_response
+    call_id, summary, needs, objections, refusal_reason, mistakes, strengths, next_action, criterion_results,
+    speech_analytics, violations, actionable_coaching, role_mapping, raw_response
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10::jsonb, 'null'::jsonb))
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NULLIF($14::jsonb, 'null'::jsonb))
 ON CONFLICT (call_id) DO UPDATE
 SET summary = EXCLUDED.summary,
     needs = EXCLUDED.needs,
@@ -149,6 +216,10 @@ SET summary = EXCLUDED.summary,
     strengths = EXCLUDED.strengths,
     next_action = EXCLUDED.next_action,
     criterion_results = EXCLUDED.criterion_results,
+    speech_analytics = EXCLUDED.speech_analytics,
+    violations = EXCLUDED.violations,
+    actionable_coaching = EXCLUDED.actionable_coaching,
+    role_mapping = EXCLUDED.role_mapping,
     raw_response = EXCLUDED.raw_response,
     updated_at = NOW()`,
 		callID,
@@ -160,6 +231,10 @@ SET summary = EXCLUDED.summary,
 		strengthsJSON,
 		result.NextAction,
 		criteriaJSON,
+		speechJSON,
+		violationsJSON,
+		coachingJSON,
+		roleJSON,
 		rawJSONOrNull(result.RawJSON),
 	); err != nil {
 		return fmt.Errorf("upsert analysis: %w", err)

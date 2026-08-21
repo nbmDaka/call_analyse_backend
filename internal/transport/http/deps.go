@@ -9,11 +9,14 @@ import (
 	"call_analyse_backend/internal/modules/auth"
 	"call_analyse_backend/internal/modules/calls"
 	"call_analyse_backend/internal/modules/dashboard"
+	"call_analyse_backend/internal/modules/golden_standards"
 	"call_analyse_backend/internal/modules/memberships"
 	platformadmin "call_analyse_backend/internal/modules/platform"
+	"call_analyse_backend/internal/modules/playbooks"
 	"call_analyse_backend/internal/modules/workspaces"
 
 	"github.com/google/uuid"
+
 )
 
 type authService interface {
@@ -61,6 +64,22 @@ type platformService interface {
 	SystemMetrics(context.Context, workspaces.PlatformRole) (platformadmin.Metrics, error)
 }
 
+type playbookService interface {
+	List(context.Context, uuid.UUID) ([]playbooks.Playbook, error)
+	GetByID(context.Context, uuid.UUID, uuid.UUID) (playbooks.Playbook, error)
+	GetDefault(context.Context, uuid.UUID) (playbooks.Playbook, error)
+	Create(context.Context, uuid.UUID, playbooks.CreateInput) (playbooks.Playbook, error)
+	Update(context.Context, uuid.UUID, uuid.UUID, playbooks.UpdateInput) (playbooks.Playbook, error)
+	Delete(context.Context, uuid.UUID, uuid.UUID) error
+}
+
+type goldenStandardsService interface {
+	List(context.Context, uuid.UUID, string) ([]golden_standards.GoldenStandard, error)
+	GetByID(context.Context, uuid.UUID, uuid.UUID) (golden_standards.GoldenStandard, error)
+	Create(context.Context, uuid.UUID, golden_standards.CreateInput) (golden_standards.GoldenStandard, error)
+	Delete(context.Context, uuid.UUID, uuid.UUID) error
+}
+
 // Dependencies are the application boundaries required by the HTTP layer.
 type Dependencies struct {
 	Authentication       authService
@@ -71,6 +90,8 @@ type Dependencies struct {
 	WorkspaceActors      workspaces.ActorResolver
 	Memberships          membershipService
 	Platform             platformService
+	Playbooks            playbookService
+	GoldenStandards      goldenStandardsService
 	Tokens               auth.TokenManager
 	EnqueueCall          func(context.Context, string) error
 	EnqueueWorkspaceCall func(context.Context, string, string) error
@@ -79,6 +100,7 @@ type Dependencies struct {
 	RequestTimeout       time.Duration
 	Logger               *slog.Logger
 }
+
 
 type server struct {
 	deps Dependencies

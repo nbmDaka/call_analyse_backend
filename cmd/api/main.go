@@ -15,7 +15,9 @@ import (
 	"call_analyse_backend/internal/modules/auth"
 	"call_analyse_backend/internal/modules/calls"
 	"call_analyse_backend/internal/modules/dashboard"
+	"call_analyse_backend/internal/modules/golden_standards"
 	"call_analyse_backend/internal/modules/memberships"
+	"call_analyse_backend/internal/modules/playbooks"
 	platformadmin "call_analyse_backend/internal/modules/platform"
 	"call_analyse_backend/internal/modules/workspaces"
 	"call_analyse_backend/internal/platform/database"
@@ -23,6 +25,7 @@ import (
 	"call_analyse_backend/internal/platform/storage"
 	"call_analyse_backend/internal/transport/http"
 	"github.com/hibiken/asynq"
+
 )
 
 const storageInitializationTimeout = 15 * time.Second
@@ -92,6 +95,8 @@ func main() {
 	workspaceService := workspaces.NewService(workspaceStore)
 	membershipService := memberships.NewService(memberships.NewPostgresStore(pool))
 	platformService := platformadmin.NewService(platformadmin.NewPostgresStore(pool))
+	playbookService := playbooks.NewService(playbooks.NewPostgresStore(pool))
+	goldenStandardsService := golden_standards.NewService(golden_standards.NewPostgresStore(pool))
 	ready := func(readyCtx context.Context) error {
 		if err := pool.Ping(readyCtx); err != nil {
 			return err
@@ -105,9 +110,11 @@ func main() {
 		Authentication: authService, CORSAllowedOrigins: cfg.CORSAllowedOrigins,
 		Calls: callService, Dashboard: dashboardService, Workspaces: workspaceService,
 		WorkspaceActors: workspaceStore, Memberships: membershipService, Platform: platformService,
+		Playbooks: playbookService, GoldenStandards: goldenStandardsService,
 		Tokens: tokens, EnqueueCall: enqueue, EnqueueWorkspaceCall: enqueueWorkspace,
 		Ready: ready, MaxUploadBytes: cfg.MaxUploadBytes, RequestTimeout: cfg.ProviderTimeout, Logger: logger,
 	})
+
 	httpServer := &http.Server{Addr: fmt.Sprintf(":%d", cfg.HTTPPort), Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if serveErr := httpServer.ListenAndServe(); serveErr != nil && serveErr != http.ErrServerClosed {

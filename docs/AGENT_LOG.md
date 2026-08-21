@@ -3,6 +3,19 @@
 This append-only log records factual implementation sessions. Task 1's detailed run
 record will be stored in `docs/agent-runs/` and the requested implementer report.
 
+## 2026-08-22 01:47 — Speech Intelligence, Playbooks, and Golden Standards Implementation
+
+- Implemented database migration `000004_playbooks_and_speech_analytics.up.sql` and down migration.
+- Implemented `internal/modules/playbooks` (entity, validation, PostgreSQL store with default assignment, service, and unit tests).
+- Implemented `internal/modules/golden_standards` (entity, validation, PostgreSQL store, service, and unit tests).
+- Enriched `internal/modules/analysis` with `RoleMapping`, `SpeechAnalytics` (talk-to-listen, pauses >3.5s, interruptions, emotional tone), `Violations`, and `ActionableCoaching`.
+- Updated `internal/integrations/ai/gemini.go` with single-pass structured extraction prompt and `fake.go` with deterministic mock data.
+- Implemented HTTP handlers and routes for `/api/v1/workspaces/{workspaceID}/playbooks` and `/golden-standards`.
+- Updated `call_analyse_frontend` with TypeScript models, `SpeechAnalyticsWidget`, structured `Violations` with severity badges, and `AIFeedback`.
+- Verification: `go test -v ./...` in backend (all tests passed), `npm test` in frontend (23 passed), `npm run build` (production build passed).
+
+
+
 ## 2026-08-21 16:58 — Multi-tenant workspace architecture
 
 - Added versioned workspace/membership/audit schema and a legacy-data backfill with

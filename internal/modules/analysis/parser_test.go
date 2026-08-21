@@ -28,6 +28,62 @@ func TestParseAndValidateAcceptsAllDefinedFieldsAndIgnoresModelTotal(t *testing.
 	}
 }
 
+func TestParseAndValidateAcceptsEnrichedSpeechAnalyticsAndViolations(t *testing.T) {
+	payload := validAnalysisPayload()
+	payload["role_mapping"] = map[string]any{
+		"manager_speaker": "Speaker 0",
+		"client_speaker":  "Speaker 1",
+	}
+	payload["speech_analytics"] = map[string]any{
+		"talk_to_listen": map[string]any{
+			"manager_percentage": 58,
+			"client_percentage":  42,
+		},
+		"awkward_pauses": []map[string]any{
+			{"start_seconds": 12.0, "end_seconds": 16.5, "duration_seconds": 4.5},
+		},
+		"interruptions": []map[string]any{
+			{"timestamp_seconds": 45.2, "interrupted_by": "manager", "context": "Interrupted during pricing question"},
+		},
+		"emotional_tone": map[string]any{
+			"manager_tone":    "confident",
+			"client_tone":     "skeptical",
+			"sentiment_shift": "positive",
+		},
+	}
+	payload["violations"] = []map[string]any{
+		{
+			"severity":          "high",
+			"title":             "Premature price drop",
+			"quote":             "We can offer 20% discount right away",
+			"timestamp_seconds": 50.5,
+			"fix_advice":        "Explain value before discounting",
+		},
+	}
+	payload["actionable_coaching"] = []string{
+		"Pause 2 seconds before answering objections",
+	}
+	raw := marshalAnalysisPayload(t, payload)
+
+	result, err := ParseAndValidate(raw)
+	if err != nil {
+		t.Fatalf("ParseAndValidate() error = %v", err)
+	}
+	if result.RoleMapping == nil || result.RoleMapping.ManagerSpeaker != "Speaker 0" {
+		t.Errorf("RoleMapping = %+v, want manager Speaker 0", result.RoleMapping)
+	}
+	if result.SpeechAnalytics == nil || result.SpeechAnalytics.TalkToListen.ManagerPercentage != 58 {
+		t.Errorf("TalkToListen = %+v, want 58%% manager", result.SpeechAnalytics)
+	}
+	if len(result.Violations) != 1 || result.Violations[0].Severity != "high" {
+		t.Errorf("Violations = %+v, want 1 high severity violation", result.Violations)
+	}
+	if len(result.ActionableCoaching) != 1 {
+		t.Errorf("ActionableCoaching = %+v, want 1 recommendation", result.ActionableCoaching)
+	}
+}
+
+
 func TestParseAndValidateRejectsInvalidAnalysisPayloads(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -25,11 +25,26 @@ current membership from PostgreSQL:
 - `GET|POST /api/v1/workspaces/{workspaceID}/calls`
 - `GET /api/v1/workspaces/{workspaceID}/calls/{callID}`
 - `GET /api/v1/workspaces/{workspaceID}/dashboard`
+- `GET|POST /api/v1/workspaces/{workspaceID}/playbooks`
+- `GET|PATCH|DELETE /api/v1/workspaces/{workspaceID}/playbooks/{playbookID}`
+- `GET|POST /api/v1/workspaces/{workspaceID}/golden-standards`
+- `DELETE /api/v1/workspaces/{workspaceID}/golden-standards/{id}`
+
+`GET /api/v1/workspaces/{workspaceID}/calls/{callID}` returns:
+- Standard call metadata (status, manager, audio object key).
+- Transcripts with segments, timestamps, and speaker labels.
+- `role_mapping` (`manager_speaker`, `client_speaker`).
+- `speech_analytics` (talk-to-listen %, awkward pauses >3.5s, interruptions, emotional tone).
+- `criterion_results` (playbook criteria results with scores, max_scores, passed, feedback, evidence_quote, timestamp).
+- `violations` (severity: high/medium/low, title, timestamp, quote, fix_advice).
+- `actionable_coaching` (tactical recommendations for the sales rep).
+- `recommended_golden_standards` (relevant stellar call excerpts).
 
 Managers see their own calls; supervisors see their own calls and assigned active
 managers; workspace owner/admin sees all calls in that workspace. Suspended workspaces
 remain readable but reject uploads. Disabled memberships are rejected immediately,
 and cross-tenant resource access returns 404.
+
 
 Platform-superadmin routes are separate:
 

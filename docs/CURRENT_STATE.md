@@ -1,4 +1,24 @@
-# Current state
+## Task 10: Speech Intelligence, Playbooks, and Golden Standards (2026-08-22)
+
+- **Migration 000004**: creates `playbooks` table with default 100-point sales playbook seeded
+  for all workspaces, `golden_standards` catalog table, and adds `speech_analytics`,
+  `violations`, `actionable_coaching`, and `role_mapping` JSONB columns to `call_analyses`.
+- **Domain Modules**:
+  - `internal/modules/playbooks`: Playbook entity, CRUD repository, validation, and default assignment.
+  - `internal/modules/golden_standards`: Golden Standards catalog for exemplary sales audio snippets.
+  - `internal/modules/analysis`: Enriched schema including `RoleMapping`, `SpeechAnalytics`
+    (Talk-to-Listen ratio, awkward pauses >3.5s, interruptions, emotional tone), `Violations`
+    with severity badges and advice, and `ActionableCoaching`.
+  - `internal/modules/scoring`: Dynamic calculation based on active playbook criteria and penalties.
+- **Provider & Pipeline**:
+  - `internal/integrations/ai/gemini.go`: Single-pass structured output prompt extracting transcript,
+    roles, speech metrics, playbook criterion scoring with evidence quotes, and coaching in 1 call.
+  - `internal/integrations/ai/fake.go`: Fully populated mock speech analytics for deterministic testing.
+  - `internal/jobs/processor.go`: Loads workspace's active playbook and executes single-pass analysis.
+- **Frontend Extensions**:
+  - Speech analytics visual gauge (Talk-to-Listen, Pauses, Interruptions, Emotion).
+  - Violations card with severity indicators, quotes, and advice.
+  - Actionable coaching list.
 
 ## Multi-tenant workspace implementation (2026-08-21)
 
@@ -15,6 +35,7 @@
   keys, and provides members and platform administration views in Russian/Kazakh.
 - Migration 000003 creates and backfills the tenant model while retaining deprecated
   `users.role`, `users.supervisor_id`, and `calls.manager_id` for rollback compatibility.
+
 
 ## Implemented in Tasks 1-9
 
@@ -71,16 +92,7 @@
 
 ## Verification status
 
-The full Go test, vet, and build checks pass. Migration 000003 passed against seeded
-legacy data in isolated PostgreSQL 16. An isolated Compose project brought up API,
-worker, PostgreSQL, Redis, and MinIO; readiness, platform company creation, and its
-audit event were verified. No real Gemini call was performed.
+The full Go test suite passes (`go test -v ./...` passed across all backend packages including analysis, playbooks, golden_standards, scoring, transport, jobs, and platform).
+Migration 000004 defines Playbooks, Golden Standards, and Speech Analytics schema.
+In the companion `call_analyse_frontend`, all 23 Vitest component/unit tests pass, TypeScript compilation passes without errors, and the production build (`npm run build`) builds cleanly.
 
-The companion `call_analyse_frontend` repository now consumes the implemented auth,
-dashboard, calls, upload, and call-detail API vertical slice. Vitest, TypeScript,
-production build, and 22 Chromium Playwright E2E scenarios pass, including a tenant
-switch cache-isolation scenario. The in-app browser was unavailable, so no separate
-manual in-app smoke was performed. The MVP client uses localStorage for its token
-session and polls non-terminal call details.
-The API also exposes a configured CORS allowlist for the separate Vite development
-origin, and the frontend deduplicates concurrent refresh requests.

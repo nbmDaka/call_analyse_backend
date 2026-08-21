@@ -7,9 +7,12 @@ import (
 
 	"call_analyse_backend/internal/modules/auth"
 	"call_analyse_backend/internal/modules/calls"
+	"call_analyse_backend/internal/modules/golden_standards"
 	platformadmin "call_analyse_backend/internal/modules/platform"
+	"call_analyse_backend/internal/modules/playbooks"
 	"call_analyse_backend/internal/modules/workspaces"
 	"call_analyse_backend/internal/transport/http/middleware"
+
 )
 
 type apiError struct {
@@ -43,8 +46,10 @@ func mapError(err error) apiError {
 		return apiError{http.StatusServiceUnavailable, "EMAIL_SERVICE_UNAVAILABLE", "email service is unavailable"}
 	case errors.Is(err, calls.ErrCallNotFound):
 		return apiError{http.StatusNotFound, "CALL_NOT_FOUND", "call not found"}
-	case errors.Is(err, workspaces.ErrWorkspaceNotFound), errors.Is(err, workspaces.ErrMembershipNotFound):
+	case errors.Is(err, workspaces.ErrWorkspaceNotFound), errors.Is(err, workspaces.ErrMembershipNotFound),
+		errors.Is(err, playbooks.ErrPlaybookNotFound), errors.Is(err, golden_standards.ErrGoldenStandardNotFound):
 		return apiError{http.StatusNotFound, "NOT_FOUND", "resource not found"}
+
 	case errors.Is(err, workspaces.ErrWorkspaceSuspended):
 		return apiError{http.StatusForbidden, "WORKSPACE_SUSPENDED", "workspace is suspended"}
 	case errors.Is(err, workspaces.ErrMembershipDisabled):

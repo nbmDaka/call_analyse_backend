@@ -22,15 +22,19 @@ var requiredFields = []string{
 }
 
 type analysisPayload struct {
-	Summary          string                            `json:"summary"`
-	Needs            []string                          `json:"needs"`
-	Objections       []string                          `json:"objections"`
-	RefusalReason    *string                           `json:"refusal_reason"`
-	Mistakes         []string                          `json:"mistakes"`
-	Strengths        []string                          `json:"strengths"`
-	NextAction       string                            `json:"next_action"`
-	CriterionResults map[string]scoring.CriterionScore `json:"criterion_results"`
-	ModelTotal       json.RawMessage                   `json:"total_score,omitempty"`
+	Summary            string                            `json:"summary"`
+	Needs              []string                          `json:"needs"`
+	Objections         []string                          `json:"objections"`
+	RefusalReason      *string                           `json:"refusal_reason"`
+	Mistakes           []string                          `json:"mistakes"`
+	Strengths          []string                          `json:"strengths"`
+	NextAction         string                            `json:"next_action"`
+	CriterionResults   map[string]scoring.CriterionScore `json:"criterion_results"`
+	RoleMapping        *RoleMapping                      `json:"role_mapping,omitempty"`
+	SpeechAnalytics    *SpeechAnalytics                  `json:"speech_analytics,omitempty"`
+	Violations         []Violation                       `json:"violations,omitempty"`
+	ActionableCoaching []string                          `json:"actionable_coaching,omitempty"`
+	ModelTotal         json.RawMessage                   `json:"total_score,omitempty"`
 }
 
 // ParseAndValidate strictly decodes provider JSON into a complete Analysis.
@@ -73,16 +77,29 @@ func ParseAndValidate(raw []byte) (Analysis, error) {
 		return Analysis{}, fmt.Errorf("validate criterion results: %w", err)
 	}
 
+	violations := payload.Violations
+	if violations == nil {
+		violations = []Violation{}
+	}
+	coaching := payload.ActionableCoaching
+	if coaching == nil {
+		coaching = []string{}
+	}
+
 	return Analysis{
-		Summary:          payload.Summary,
-		Needs:            payload.Needs,
-		Objections:       payload.Objections,
-		RefusalReason:    payload.RefusalReason,
-		Mistakes:         payload.Mistakes,
-		Strengths:        payload.Strengths,
-		NextAction:       payload.NextAction,
-		CriterionResults: payload.CriterionResults,
-		RawJSON:          append(json.RawMessage(nil), raw...),
+		Summary:            payload.Summary,
+		Needs:              payload.Needs,
+		Objections:         payload.Objections,
+		RefusalReason:      payload.RefusalReason,
+		Mistakes:           payload.Mistakes,
+		Strengths:          payload.Strengths,
+		NextAction:         payload.NextAction,
+		CriterionResults:   payload.CriterionResults,
+		RoleMapping:        payload.RoleMapping,
+		SpeechAnalytics:    payload.SpeechAnalytics,
+		Violations:         violations,
+		ActionableCoaching: coaching,
+		RawJSON:            append(json.RawMessage(nil), raw...),
 	}, nil
 }
 

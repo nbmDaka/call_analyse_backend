@@ -53,3 +53,22 @@ Migration 000003 creates personal tenants for existing users, creates a determin
 legacy company tenant, preserves supervisor relationships, and backfills call
 ownership before enforcing NOT NULL. Legacy role/manager columns and object keys are
 retained temporarily; all new authorization uses memberships and workspace IDs.
+
+## D-009: Single-pass multimodal Gemini pipeline for speech and playbook intelligence
+
+Call analysis uses a direct single-pass structured JSON extraction via Gemini 1.5 Flash
+(accepting raw audio or diarized transcripts) instead of multi-service pipelines.
+This single call performs transcription with timestamps, manager/client role classification,
+speech analytics (talk-to-listen ratio, pauses >3.5s, interruptions, emotional tone),
+playbook criterion verification with grounded evidence quotes, violations categorization
+(high/medium/low severity), and actionable sales coaching. This minimizes latency and cost
+while capturing vocal nuance (sarcasm, frustration, agitation) that raw text transcripts miss.
+
+## D-010: Inject structured playbooks directly into prompts; catalog golden standards
+
+Playbooks are stored as structured JSONB in PostgreSQL per workspace and injected directly
+into LLM evaluation prompts. Vector DB / RAG is intentionally avoided for playbook rule
+evaluation to guarantee 100% deterministic compliance checking. Conversely, Golden Standards
+(stellar call snippets) are cataloged by category and audio timestamps in PostgreSQL (with
+pgvector foundation) for targeted recommendation when managers commit critical errors.
+

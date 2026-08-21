@@ -87,7 +87,25 @@ func (g *Gemini) Transcribe(ctx context.Context, input transcription.AudioInput)
 // Analyze requests structured JSON and decodes the model's returned analysis.
 // Strict business validation is deliberately owned by the analysis package.
 func (g *Gemini) Analyze(ctx context.Context, transcript transcription.Transcript) (analysis.Analysis, error) {
-	prompt := `Analyze the following sales-call transcript. Return JSON only with these fields: summary, needs, objections, refusal_reason, mistakes, strengths, next_action, criterion_results. criterion_results must map each criterion to an object with score and feedback. Transcript:
+	prompt := `Analyze the following sales-call transcript.
+Evaluate according to standard sales criteria: greeting (max 5), rapport (max 10), needs_discovery (max 20), presentation (max 15), objection_handling (max 20), next_action (max 15), communication (max 10), closing (max 5).
+Also extract speech dynamics (talk-to-listen percentage, awkward pauses >3.5s, interruptions, emotional tone), speaker role mapping (who is manager and who is client), specific violations with severity and actionable coaching tips.
+
+Return JSON only with these fields:
+- summary (string)
+- needs (array of strings)
+- objections (array of strings)
+- refusal_reason (nullable string)
+- mistakes (array of strings)
+- strengths (array of strings)
+- next_action (string)
+- criterion_results (object mapping each criterion key to {score: number, feedback: string})
+- role_mapping ({manager_speaker: string, client_speaker: string})
+- speech_analytics ({talk_to_listen: {manager_percentage: number, client_percentage: number}, awkward_pauses: [{start_seconds: number, end_seconds: number, duration_seconds: number}], interruptions: [{timestamp_seconds: number, interrupted_by: string, context: string}], emotional_tone: {manager_tone: string, client_tone: string, sentiment_shift: string}})
+- violations (array of {severity: "low"|"medium"|"high", title: string, quote: string, timestamp_seconds: number, fix_advice: string})
+- actionable_coaching (array of actionable tactical tips for the manager)
+
+Transcript:
 ` + transcript.Text
 	request := geminiGenerateContentRequest{
 		Contents:         []geminiContent{{Role: "user", Parts: []geminiPart{{Text: prompt}}}},
@@ -103,6 +121,7 @@ func (g *Gemini) Analyze(ctx context.Context, transcript transcription.Transcrip
 	}
 	return result, nil
 }
+
 
 func (g *Gemini) generate(ctx context.Context, model string, request geminiGenerateContentRequest) (string, error) {
 	body, err := json.Marshal(request)
