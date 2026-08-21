@@ -62,7 +62,7 @@ jobs:
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
-          ssh -o BatchMode=yes -p "${DEPLOY_PORT:-9865}" "$DEPLOY_USER@$DEPLOY_HOST" <<'REMOTE'
+          ssh -o BatchMode=yes -p "${DEPLOY_PORT:-9865}" "$DEPLOY_USER@$DEPLOY_HOST" bash -s <<'REMOTE'
             set -eu
             cd /home/nurdaulet/apps/call-analyse-backend
             git pull --ff-only origin main
