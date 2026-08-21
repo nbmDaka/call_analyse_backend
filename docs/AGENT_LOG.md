@@ -3,6 +3,20 @@
 This append-only log records factual implementation sessions. Task 1's detailed run
 record will be stored in `docs/agent-runs/` and the requested implementer report.
 
+## 2026-08-21 16:58 — Multi-tenant workspace architecture
+
+- Added versioned workspace/membership/audit schema and a legacy-data backfill with
+  required call tenant, owner, and uploader fields while retaining compatibility columns.
+- Added database-backed workspace actors, membership and platform services, explicit
+  workspace routes, tenant-scoped calls/dashboard SQL, and workspace-bound worker tasks.
+- Registration now atomically creates personal workspace ownership; platform and
+  workspace roles are independent and suspended/disabled access fails closed.
+- Migrated the React client to persisted workspace selection, tenant query keys,
+  role-aware navigation, members management, and platform administration in RU/KK.
+- Isolated PostgreSQL migration and Compose runtime smoke passed. Go tests/vet/build,
+  frontend tests/typecheck/build, and 22 Chromium Playwright E2E scenarios passed.
+- No Git commit or push was created.
+
 ## 2026-08-14 15:48 — Task 1 bootstrap
 
 - Added the Go module, TDD-backed configuration loader, command scaffolds, Docker/

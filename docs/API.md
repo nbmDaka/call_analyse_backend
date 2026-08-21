@@ -12,16 +12,39 @@ Authentication:
 - `POST /api/v1/auth/logout` revokes a refresh session.
 - `GET /api/v1/me` returns the authenticated public user.
 
-Calls require `Authorization: Bearer <access-token>`:
+`GET /api/v1/me` includes `platform_role` and user status. JWTs identify the user
+and platform role only; they never act as the source of truth for workspace roles.
 
-- `POST /api/v1/calls` accepts multipart field `file`, supports `.mp3`, `.wav`, `.m4a`,
-  and returns `201` with a queued call.
-- `GET /api/v1/calls?page=1&page_size=20` returns actor-scoped calls.
-- `GET /api/v1/calls/{id}` returns call/audio/manager data and persisted transcript,
-  analysis, and score when available.
+Workspace routes require `Authorization: Bearer <access-token>` and reload the
+current membership from PostgreSQL:
 
-`GET /api/v1/dashboard/summary` returns scoped total, completed, failed, and average-score
-aggregates. Managers see their calls, supervisors their managers' calls, and admins all calls.
+- `GET|POST /api/v1/workspaces`
+- `GET|PATCH /api/v1/workspaces/{workspaceID}`
+- `GET|POST /api/v1/workspaces/{workspaceID}/members`
+- `PATCH|DELETE /api/v1/workspaces/{workspaceID}/members/{membershipID}`
+- `GET|POST /api/v1/workspaces/{workspaceID}/calls`
+- `GET /api/v1/workspaces/{workspaceID}/calls/{callID}`
+- `GET /api/v1/workspaces/{workspaceID}/dashboard`
+
+Managers see their own calls; supervisors see their own calls and assigned active
+managers; workspace owner/admin sees all calls in that workspace. Suspended workspaces
+remain readable but reject uploads. Disabled memberships are rejected immediately,
+and cross-tenant resource access returns 404.
+
+Platform-superadmin routes are separate:
+
+- `GET|POST /api/v1/platform/workspaces`
+- `GET /api/v1/platform/users`
+- `GET /api/v1/platform/metrics`
+- `PATCH /api/v1/platform/workspaces/{workspaceID}/status`
+- `PATCH /api/v1/platform/users/{userID}/status`
+
+Platform mutations write sanitized audit events. These endpoints expose system
+metadata and aggregates, not transcript/audio content, and no impersonation flow exists.
+
+The old `/api/v1/calls` and `/api/v1/dashboard/summary` patterns remain registered as
+deprecated compatibility routes, but the production tenant store requires explicit
+workspace scope. The frontend uses only the new workspace routes.
 
 The companion frontend consumes these routes directly, normalizes the Go default
 exported-field names in call responses, and does not calculate scores or enforce

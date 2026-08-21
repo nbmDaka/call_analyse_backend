@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"call_analyse_backend/internal/modules/auth"
+	"call_analyse_backend/internal/modules/workspaces"
 
 	"github.com/google/uuid"
 )
@@ -131,16 +132,17 @@ func TestServiceDetailReturnsNotFoundForMissingOrUnownedCall(t *testing.T) {
 
 func TestListQueryScopesActorBeforePagination(t *testing.T) {
 	managerID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
-	query, args, err := listQuery(Actor{ID: managerID, Role: auth.RoleManager}, Page{Number: 2, Size: 25})
+	workspaceID := uuid.MustParse("00000000-0000-0000-0000-000000000002")
+	query, args, err := listQuery(Actor{UserID: managerID, WorkspaceID: workspaceID, MembershipID: uuid.New(), WorkspaceRole: workspaces.RoleManager}, Page{Number: 2, Size: 25})
 	if err != nil {
 		t.Fatalf("listQuery() error = %v, want nil", err)
 	}
-	whereAt := strings.Index(query, "WHERE c.manager_id = $1")
-	limitAt := strings.Index(query, "LIMIT $2 OFFSET $3")
+	whereAt := strings.Index(query, "WHERE c.workspace_id = $1 AND c.owner_user_id = $2")
+	limitAt := strings.Index(query, "LIMIT $3 OFFSET $4")
 	if whereAt < 0 || limitAt < 0 || whereAt > limitAt {
 		t.Errorf("listQuery() = %q, want actor scope before pagination", query)
 	}
-	wantArgs := []any{managerID, 25, 25}
+	wantArgs := []any{workspaceID, managerID, 25, 25}
 	if len(args) != len(wantArgs) {
 		t.Fatalf("listQuery() args = %#v, want %#v", args, wantArgs)
 	}
@@ -148,6 +150,40 @@ func TestListQueryScopesActorBeforePagination(t *testing.T) {
 		if args[i] != wantArgs[i] {
 			t.Errorf("listQuery() args[%d] = %#v, want %#v", i, args[i], wantArgs[i])
 		}
+	}
+}
+
+func TestDetailQueryScopesByCallAndWorkspaceBeforeRole(t *testing.T) {
+	workspaceID, managerID, callID := uuid.New(), uuid.New(), uuid.New()
+	actor := Actor{UserID: managerID, WorkspaceID: workspaceID, MembershipID: uuid.New(), WorkspaceRole: workspaces.RoleManager}
+	query, args, err := detailQuery(actor, callID)
+	if err != nil {
+		t.Fatalf("detailQuery() error = %v", err)
+	}
+	if !strings.Contains(query, "WHERE c.id = $1 AND c.workspace_id = $2 AND c.owner_user_id = $3") {
+		t.Fatalf("detail query is not tenant scoped: %s", query)
+	}
+	want := []any{callID, workspaceID, managerID}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Fatalf("args[%d] = %v, want %v", i, args[i], want[i])
+		}
+	}
+}
+
+func TestSupervisorScopeUsesSameWorkspaceMembershipRelationship(t *testing.T) {
+	actor := Actor{UserID: uuid.New(), WorkspaceID: uuid.New(), MembershipID: uuid.New(), WorkspaceRole: workspaces.RoleSupervisor}
+	query, args, err := listQuery(actor, Page{Number: 1, Size: 10})
+	if err != nil {
+		t.Fatalf("listQuery() error = %v", err)
+	}
+	for _, required := range []string{"c.workspace_id = $1", "managed.workspace_id = $1", "managed.supervisor_membership_id = $3", "LIMIT $4 OFFSET $5"} {
+		if !strings.Contains(query, required) {
+			t.Fatalf("supervisor query missing %q: %s", required, query)
+		}
+	}
+	if args[0] != actor.WorkspaceID || args[1] != actor.UserID || args[2] != actor.MembershipID {
+		t.Fatalf("supervisor scope args = %#v", args[:3])
 	}
 }
 

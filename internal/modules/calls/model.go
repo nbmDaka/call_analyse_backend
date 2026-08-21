@@ -27,17 +27,20 @@ const (
 
 // Call is the persisted metadata for an uploaded sales call.
 type Call struct {
-	ID               uuid.UUID
-	ManagerID        uuid.UUID
-	Status           Status
-	OriginalFilename string
-	ObjectKey        string
-	ContentType      string
-	SizeBytes        int64
-	DurationSeconds  *int
-	ErrorMessage     *string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID               uuid.UUID `json:"id"`
+	WorkspaceID      uuid.UUID `json:"workspace_id"`
+	OwnerUserID      uuid.UUID `json:"owner_user_id"`
+	UploadedByUserID uuid.UUID `json:"uploaded_by_user_id"`
+	ManagerID        uuid.UUID `json:"manager_id"` // Deprecated compatibility field.
+	Status           Status    `json:"status"`
+	OriginalFilename string    `json:"original_filename"`
+	ObjectKey        string    `json:"object_key,omitempty"`
+	ContentType      string    `json:"content_type"`
+	SizeBytes        int64     `json:"size_bytes"`
+	DurationSeconds  *int      `json:"duration_seconds,omitempty"`
+	ErrorMessage     *string   `json:"error_message,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 // CallDetail is the API read model. Result fields are nullable because a call

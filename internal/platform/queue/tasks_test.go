@@ -32,3 +32,18 @@ func TestNewProcessCallTaskRejectsInvalidCallID(t *testing.T) {
 		t.Fatal("NewProcessCallTask() error = nil, want invalid UUID error")
 	}
 }
+
+func TestNewWorkspaceProcessCallTaskCarriesTenantScope(t *testing.T) {
+	workspaceID, callID := uuid.New(), uuid.New()
+	task, err := NewWorkspaceProcessCallTask(workspaceID.String(), callID.String())
+	if err != nil {
+		t.Fatalf("NewWorkspaceProcessCallTask() error = %v", err)
+	}
+	var payload ProcessCallPayload
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.WorkspaceID != workspaceID.String() || payload.CallID != callID.String() {
+		t.Fatalf("payload = %#v", payload)
+	}
+}

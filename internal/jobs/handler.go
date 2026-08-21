@@ -33,5 +33,8 @@ func (h *Handler) ProcessTask(ctx context.Context, task *asynq.Task) error {
 	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
 		return fmt.Errorf("decode process call task: %w", err)
 	}
+	if payload.WorkspaceID != "" {
+		return h.processor.ProcessInWorkspace(ctx, payload.WorkspaceID, payload.CallID)
+	}
 	return h.processor.Process(ctx, payload.CallID)
 }

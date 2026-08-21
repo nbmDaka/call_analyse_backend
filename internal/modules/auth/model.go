@@ -6,6 +6,8 @@ import (
 	"errors"
 	"time"
 
+	"call_analyse_backend/internal/modules/workspaces"
+
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
@@ -28,6 +30,7 @@ var (
 	ErrEmailAlreadyExists      = errors.New("email already exists")
 	ErrInvalidCredentials      = errors.New("invalid credentials")
 	ErrEmailNotVerified        = errors.New("email is not verified")
+	ErrUserSuspended           = errors.New("user is suspended")
 	ErrInvalidActionToken      = errors.New("invalid or expired action token")
 	ErrEmailServiceUnavailable = errors.New("email service is unavailable")
 	ErrInvalidRefreshToken     = errors.New("invalid refresh token")
@@ -37,11 +40,20 @@ var (
 // Role describes the authorization level granted to a user.
 type Role string
 
+type PlatformRole = workspaces.PlatformRole
+
+const (
+	PlatformRoleUser       = workspaces.PlatformRoleUser
+	PlatformRoleSuperAdmin = workspaces.PlatformRoleSuperAdmin
+)
+
 // User is the minimal authenticated user record.
 type User struct {
 	ID              uuid.UUID
 	Email           string
 	PasswordHash    string
+	PlatformRole    PlatformRole
+	Status          string
 	Role            Role
 	SupervisorID    *uuid.UUID
 	EmailVerifiedAt *time.Time
@@ -53,6 +65,8 @@ type User struct {
 type PublicUser struct {
 	ID            uuid.UUID
 	Email         string
+	PlatformRole  PlatformRole `json:"platform_role"`
+	Status        string       `json:"status"`
 	Role          Role
 	SupervisorID  *uuid.UUID
 	EmailVerified bool
@@ -102,9 +116,10 @@ type RefreshToken struct {
 
 // Claims are the deliberately small JWT payload used for authentication.
 type Claims struct {
-	UserID    string `json:"user_id"`
-	Role      Role   `json:"role"`
-	TokenType string `json:"token_type"`
+	UserID       string       `json:"user_id"`
+	PlatformRole PlatformRole `json:"platform_role"`
+	Role         Role         `json:"role,omitempty"` // Deprecated compatibility claim.
+	TokenType    string       `json:"token_type"`
 	jwt.RegisteredClaims
 }
 
@@ -131,6 +146,15 @@ type UserStore interface {
 	Create(ctx context.Context, user User) (User, error)
 	MarkEmailVerified(ctx context.Context, id uuid.UUID) error
 	UpdatePassword(ctx context.Context, id uuid.UUID, passwordHash string) error
+}
+
+// RegistrationStore atomically creates the account, personal workspace, and owner membership.
+type RegistrationStore interface {
+	CreateWithPersonalWorkspace(context.Context, User, string) (User, error)
+}
+
+type PlatformRoleStore interface {
+	SetPlatformRole(context.Context, uuid.UUID, PlatformRole) (User, error)
 }
 
 // RefreshTokenStore is the refresh-session persistence boundary required by Service.

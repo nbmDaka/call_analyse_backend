@@ -138,6 +138,24 @@ func TestServiceRegisterCreatesNewUserAndReturnsTokens(t *testing.T) {
 	}
 }
 
+func TestServiceRegisterUsesAtomicPersonalWorkspaceStore(t *testing.T) {
+	ctx := context.Background()
+	hasher := NewPasswordHasher()
+	users := &fakeRegistrationStore{fakeUserStore: fakeUserStore{byEmail: map[string]User{}, byID: map[uuid.UUID]User{}}}
+	service := NewService(users, &fakeRefreshStore{tokens: map[string]RefreshToken{}}, hasher, mustNewTokenManager(t, time.Hour, 24*time.Hour))
+
+	if err := service.Register(ctx, "owner@example.com", "secret123"); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if users.personalWorkspaceCalls != 1 {
+		t.Fatalf("atomic personal workspace registrations = %d, want 1", users.personalWorkspaceCalls)
+	}
+	created := users.byEmail["owner@example.com"]
+	if created.PlatformRole != PlatformRoleUser {
+		t.Fatalf("platform role = %q, want user", created.PlatformRole)
+	}
+}
+
 func authenticatedServiceFixture(t *testing.T) (User, Service, TokenManager, *fakeRefreshStore) {
 	t.Helper()
 	verifiedAt := time.Now().UTC()
@@ -157,6 +175,16 @@ func authenticatedServiceFixture(t *testing.T) (User, Service, TokenManager, *fa
 type fakeUserStore struct {
 	byEmail map[string]User
 	byID    map[uuid.UUID]User
+}
+
+type fakeRegistrationStore struct {
+	fakeUserStore
+	personalWorkspaceCalls int
+}
+
+func (s *fakeRegistrationStore) CreateWithPersonalWorkspace(ctx context.Context, user User, _ string) (User, error) {
+	s.personalWorkspaceCalls++
+	return s.Create(ctx, user)
 }
 
 func (s *fakeUserStore) FindByEmail(_ context.Context, email string) (User, error) {

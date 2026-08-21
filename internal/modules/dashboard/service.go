@@ -18,7 +18,7 @@ func NewService(store Store) Service {
 
 // Summary returns the dashboard aggregate visible to actor.
 func (s Service) Summary(ctx context.Context, actor calls.Actor) (Summary, error) {
-	if actor.ID.String() == "00000000-0000-0000-0000-000000000000" || s.store == nil {
+	if actor.ID.String() == "00000000-0000-0000-0000-000000000000" && actor.UserID.String() == "00000000-0000-0000-0000-000000000000" || s.store == nil {
 		return Summary{}, calls.ErrInvalidActor
 	}
 	return s.store.Summary(ctx, actor)

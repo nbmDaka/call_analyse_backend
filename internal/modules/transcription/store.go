@@ -29,12 +29,27 @@ func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
 
 // Get retrieves a persisted transcript. The bool is false when no checkpoint exists.
 func (s *PostgresStore) Get(ctx context.Context, callID uuid.UUID) (Transcript, bool, error) {
+	return s.get(ctx, uuid.Nil, callID)
+}
+
+func (s *PostgresStore) GetInWorkspace(ctx context.Context, workspaceID, callID uuid.UUID) (Transcript, bool, error) {
+	return s.get(ctx, workspaceID, callID)
+}
+
+func (s *PostgresStore) get(ctx context.Context, workspaceID, callID uuid.UUID) (Transcript, bool, error) {
 	var transcript Transcript
 	var segmentsJSON []byte
-	err := s.pool.QueryRow(ctx, `
+	query := `
 SELECT full_text, segments
-FROM call_transcripts
-WHERE call_id = $1`, callID).Scan(&transcript.Text, &segmentsJSON)
+FROM call_transcripts t`
+	args := []any{callID}
+	if workspaceID == uuid.Nil {
+		query += " WHERE t.call_id = $1"
+	} else {
+		query += " JOIN calls c ON c.id = t.call_id WHERE t.call_id = $1 AND c.workspace_id = $2"
+		args = append(args, workspaceID)
+	}
+	err := s.pool.QueryRow(ctx, query, args...).Scan(&transcript.Text, &segmentsJSON)
 	if errorsIsNoRows(err) {
 		return Transcript{}, false, nil
 	}

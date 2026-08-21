@@ -24,25 +24,67 @@ func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
 func (s *PostgresStore) FindByEmail(ctx context.Context, email string) (User, error) {
 	return scanUser(s.pool.QueryRow(ctx, `
 SELECT id, email, password_hash, role, supervisor_id, email_verified_at, created_at, updated_at
+       , platform_role, status
 FROM users WHERE email = $1`, email))
 }
 
 func (s *PostgresStore) FindByID(ctx context.Context, id uuid.UUID) (User, error) {
 	return scanUser(s.pool.QueryRow(ctx, `
 SELECT id, email, password_hash, role, supervisor_id, email_verified_at, created_at, updated_at
+       , platform_role, status
 FROM users WHERE id = $1`, id))
 }
 
 func (s *PostgresStore) Create(ctx context.Context, user User) (User, error) {
 	created, err := scanUser(s.pool.QueryRow(ctx, `
-INSERT INTO users (id, email, password_hash, role, supervisor_id, email_verified_at)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, email, password_hash, role, supervisor_id, email_verified_at, created_at, updated_at`,
-		user.ID, user.Email, user.PasswordHash, user.Role, user.SupervisorID, user.EmailVerifiedAt))
+INSERT INTO users (id, email, password_hash, role, supervisor_id, email_verified_at, platform_role, status)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, email, password_hash, role, supervisor_id, email_verified_at, created_at, updated_at, platform_role, status`,
+		user.ID, user.Email, user.PasswordHash, legacyRole(user.Role), user.SupervisorID, user.EmailVerifiedAt, platformRole(user.PlatformRole), userStatus(user.Status)))
 	if isUniqueViolation(err) {
 		return User{}, ErrEmailAlreadyExists
 	}
 	return created, err
+}
+
+func (s *PostgresStore) CreateWithPersonalWorkspace(ctx context.Context, user User, workspaceName string) (User, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return User{}, err
+	}
+	defer tx.Rollback(ctx)
+	created, err := scanUser(tx.QueryRow(ctx, `
+INSERT INTO users (id, email, password_hash, role, supervisor_id, email_verified_at, platform_role, status)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, email, password_hash, role, supervisor_id, email_verified_at, created_at, updated_at, platform_role, status`,
+		user.ID, user.Email, user.PasswordHash, legacyRole(user.Role), user.SupervisorID, user.EmailVerifiedAt, platformRole(user.PlatformRole), userStatus(user.Status)))
+	if isUniqueViolation(err) {
+		return User{}, ErrEmailAlreadyExists
+	}
+	if err != nil {
+		return User{}, err
+	}
+	workspaceID, membershipID := uuid.New(), uuid.New()
+	if _, err := tx.Exec(ctx, `
+INSERT INTO workspaces (id, name, type, status, owner_user_id)
+VALUES ($1, $2, 'personal', 'active', $3)`, workspaceID, workspaceName, created.ID); err != nil {
+		return User{}, fmt.Errorf("create personal workspace: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+INSERT INTO workspace_memberships (id, workspace_id, user_id, role, status)
+VALUES ($1, $2, $3, 'owner', 'active')`, membershipID, workspaceID, created.ID); err != nil {
+		return User{}, fmt.Errorf("create personal owner membership: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return User{}, err
+	}
+	return created, nil
+}
+
+func (s *PostgresStore) SetPlatformRole(ctx context.Context, userID uuid.UUID, role PlatformRole) (User, error) {
+	return scanUser(s.pool.QueryRow(ctx, `
+UPDATE users SET platform_role = $2, updated_at = NOW() WHERE id = $1
+RETURNING id, email, password_hash, role, supervisor_id, email_verified_at, created_at, updated_at, platform_role, status`, userID, platformRole(role)))
 }
 
 func (s *PostgresStore) Store(ctx context.Context, token RefreshToken) error {
@@ -187,12 +229,33 @@ type rowScanner interface {
 func scanUser(row rowScanner) (User, error) {
 	var user User
 	var role string
-	err := row.Scan(&user.ID, &user.Email, &user.PasswordHash, &role, &user.SupervisorID, &user.EmailVerifiedAt, &user.CreatedAt, &user.UpdatedAt)
+	err := row.Scan(&user.ID, &user.Email, &user.PasswordHash, &role, &user.SupervisorID, &user.EmailVerifiedAt, &user.CreatedAt, &user.UpdatedAt, &user.PlatformRole, &user.Status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrUserNotFound
 	}
 	user.Role = Role(role)
 	return user, err
+}
+
+func legacyRole(role Role) Role {
+	if role == RoleAdmin || role == RoleSupervisor || role == RoleManager {
+		return role
+	}
+	return RoleManager
+}
+
+func platformRole(role PlatformRole) PlatformRole {
+	if role == PlatformRoleSuperAdmin {
+		return role
+	}
+	return PlatformRoleUser
+}
+
+func userStatus(status string) string {
+	if status == "suspended" {
+		return status
+	}
+	return "active"
 }
 
 func isUniqueViolation(err error) bool {

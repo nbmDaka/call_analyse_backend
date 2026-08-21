@@ -23,5 +23,16 @@ API ---- PostgreSQL
 real services and gracefully shuts down; worker startup owns asynchronous processing
 and persisted checkpoints.
 
+Tenant authorization is rebuilt for every `/workspaces/{workspaceID}/...` request
+by joining the authenticated user to the current workspace and membership rows.
+The resulting actor is passed through handlers, services, and stores. Call list,
+detail, pagination, and dashboard SQL apply `workspace_id` before role scope,
+pagination, or aggregation. Supervisor scope uses same-workspace membership IDs.
+
+`internal/modules/workspaces`, `memberships`, and `platform` own tenant lifecycle,
+membership management, and platform administration. Platform mutations are separate
+from workspace endpoints and write sanitized `audit_events`. New Asynq tasks contain
+both workspace and call IDs; the Gemini provider remains unaware of authorization.
+
 The companion `call_analyse_frontend` repository is a React/TypeScript client using
 the REST API, TanStack Query for server state, and React state for local UI state.

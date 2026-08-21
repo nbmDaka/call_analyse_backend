@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"call_analyse_backend/internal/modules/calls"
+	"call_analyse_backend/internal/modules/workspaces"
 	"call_analyse_backend/internal/transport/http/middleware"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -18,12 +19,20 @@ func (s server) createCall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, errors.New("call service is not configured"))
 		return
 	}
-	actor, ok := middleware.ActorFromContext(r.Context())
+	actor, workspaceActor, ok := callActorFromRequest(r)
 	if !ok {
 		writeError(w, r, middleware.ErrUnauthenticated)
 		return
 	}
-	if actor.Role != "admin" && actor.Role != "manager" {
+	if workspaceActor != nil && !workspaceActor.CanUpload() {
+		if workspaceActor.WorkspaceStatus == workspaces.StatusSuspended {
+			writeError(w, r, workspaces.ErrWorkspaceSuspended)
+			return
+		}
+		writeError(w, r, calls.ErrInvalidActor)
+		return
+	}
+	if workspaceActor == nil && actor.Role != "admin" && actor.Role != "manager" {
 		writeError(w, r, calls.ErrInvalidActor)
 		return
 	}
@@ -47,12 +56,12 @@ func (s server) createCall(w http.ResponseWriter, r *http.Request) {
 		writeInvalid(w, r, err.Error())
 		return
 	}
-	created, err := s.deps.Calls.Create(r.Context(), calls.Actor{ID: actor.ID, Role: actor.Role}, calls.Upload{Filename: header.Filename, ContentType: header.Header.Get("Content-Type"), Size: header.Size, Reader: file})
+	created, err := s.deps.Calls.Create(r.Context(), actor, calls.Upload{Filename: header.Filename, ContentType: header.Header.Get("Content-Type"), Size: header.Size, Reader: file})
 	if err != nil {
 		writeError(w, r, err)
 		return
 	}
-	if s.deps.EnqueueCall == nil {
+	if workspaceActor != nil && s.deps.EnqueueWorkspaceCall == nil || workspaceActor == nil && s.deps.EnqueueCall == nil {
 		if rollback, ok := s.deps.Calls.(interface {
 			RollbackCreate(context.Context, calls.Call) error
 		}); ok {
@@ -61,26 +70,40 @@ func (s server) createCall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, errors.New("call queue is not configured"))
 		return
 	}
-	if queueable, ok := s.deps.Calls.(interface {
+	var queueErr error
+	if workspaceActor != nil {
+		if queueable, ok := s.deps.Calls.(interface {
+			QueueInWorkspace(context.Context, uuid.UUID, uuid.UUID) error
+		}); ok {
+			queueErr = queueable.QueueInWorkspace(r.Context(), created.WorkspaceID, created.ID)
+		}
+	} else if queueable, ok := s.deps.Calls.(interface {
 		Queue(context.Context, uuid.UUID) error
 	}); ok {
-		if err := queueable.Queue(r.Context(), created.ID); err != nil {
-			if rollback, rollbackOK := s.deps.Calls.(interface {
-				RollbackCreate(context.Context, calls.Call) error
-			}); rollbackOK {
-				_ = rollback.RollbackCreate(r.Context(), created)
-			}
-			writeError(w, r, err)
-			return
-		}
+		queueErr = queueable.Queue(r.Context(), created.ID)
 	}
-	if err := s.deps.EnqueueCall(r.Context(), created.ID.String()); err != nil {
+	if queueErr != nil {
+		if rollback, rollbackOK := s.deps.Calls.(interface {
+			RollbackCreate(context.Context, calls.Call) error
+		}); rollbackOK {
+			_ = rollback.RollbackCreate(r.Context(), created)
+		}
+		writeError(w, r, queueErr)
+		return
+	}
+	var enqueueErr error
+	if workspaceActor != nil {
+		enqueueErr = s.deps.EnqueueWorkspaceCall(r.Context(), created.WorkspaceID.String(), created.ID.String())
+	} else {
+		enqueueErr = s.deps.EnqueueCall(r.Context(), created.ID.String())
+	}
+	if enqueueErr != nil {
 		if rollback, ok := s.deps.Calls.(interface {
 			RollbackCreate(context.Context, calls.Call) error
 		}); ok {
 			_ = rollback.RollbackCreate(r.Context(), created)
 		}
-		writeError(w, r, err)
+		writeError(w, r, enqueueErr)
 		return
 	}
 	if created.Status != calls.StatusQueued {
@@ -94,7 +117,7 @@ func (s server) listCalls(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, errors.New("call service is not configured"))
 		return
 	}
-	actor, ok := middleware.ActorFromContext(r.Context())
+	actor, _, ok := callActorFromRequest(r)
 	if !ok {
 		writeError(w, r, middleware.ErrUnauthenticated)
 		return
@@ -113,7 +136,7 @@ func (s server) listCalls(w http.ResponseWriter, r *http.Request) {
 		writeInvalid(w, r, "invalid pagination")
 		return
 	}
-	result, err := s.deps.Calls.List(r.Context(), calls.Actor{ID: actor.ID, Role: actor.Role}, calls.Page{Number: page, Size: size})
+	result, err := s.deps.Calls.List(r.Context(), actor, calls.Page{Number: page, Size: size})
 	if err != nil {
 		if isPaginationError(err) {
 			writeInvalid(w, r, "invalid pagination")
@@ -130,7 +153,7 @@ func (s server) detailCall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, errors.New("call service is not configured"))
 		return
 	}
-	actor, ok := middleware.ActorFromContext(r.Context())
+	actorValue, _, ok := callActorFromRequest(r)
 	if !ok {
 		writeError(w, r, middleware.ErrUnauthenticated)
 		return
@@ -140,7 +163,6 @@ func (s server) detailCall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, calls.ErrCallNotFound)
 		return
 	}
-	actorValue := calls.Actor{ID: actor.ID, Role: actor.Role}
 	if detailed, ok := s.deps.Calls.(interface {
 		FullDetail(context.Context, calls.Actor, uuid.UUID) (calls.CallDetail, error)
 	}); ok {
@@ -162,6 +184,17 @@ func (s server) detailCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"call": result, "manager": map[string]any{"id": result.ManagerID}, "audio": map[string]any{"filename": result.OriginalFilename, "content_type": result.ContentType, "size_bytes": result.SizeBytes}, "transcript": nil, "analysis": nil, "score": nil})
+}
+
+func callActorFromRequest(r *http.Request) (calls.Actor, *workspaces.Actor, bool) {
+	if workspaceActor, ok := middleware.WorkspaceActorFromContext(r.Context()); ok {
+		return calls.ActorFromWorkspace(workspaceActor), &workspaceActor, true
+	}
+	identity, ok := middleware.ActorFromContext(r.Context())
+	if !ok {
+		return calls.Actor{}, nil, false
+	}
+	return calls.Actor{ID: identity.ID, Role: identity.Role}, nil, true
 }
 
 func isPaginationError(err error) bool {

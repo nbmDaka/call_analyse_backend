@@ -40,12 +40,28 @@ func (s *PostgresStore) Exists(ctx context.Context, callID uuid.UUID) (bool, err
 
 // Get loads the persisted analysis and score read model for API detail views.
 func (s *PostgresStore) Get(ctx context.Context, callID uuid.UUID) (Analysis, scoring.Score, bool, error) {
+	return s.get(ctx, uuid.Nil, callID)
+}
+
+func (s *PostgresStore) GetInWorkspace(ctx context.Context, workspaceID, callID uuid.UUID) (Analysis, scoring.Score, bool, error) {
+	return s.get(ctx, workspaceID, callID)
+}
+
+func (s *PostgresStore) get(ctx context.Context, workspaceID, callID uuid.UUID) (Analysis, scoring.Score, bool, error) {
 	var result Analysis
 	var needsJSON, objectionsJSON, mistakesJSON, strengthsJSON, criteriaJSON []byte
 	var rawJSON []byte
-	err := s.pool.QueryRow(ctx, `
+	analysisQuery := `
 SELECT summary, needs, objections, refusal_reason, mistakes, strengths, next_action, criterion_results, COALESCE(raw_response, 'null'::jsonb)
-FROM call_analyses WHERE call_id = $1`, callID).Scan(&result.Summary, &needsJSON, &objectionsJSON, &result.RefusalReason, &mistakesJSON, &strengthsJSON, &result.NextAction, &criteriaJSON, &rawJSON)
+FROM call_analyses a`
+	args := []any{callID}
+	if workspaceID == uuid.Nil {
+		analysisQuery += " WHERE a.call_id = $1"
+	} else {
+		analysisQuery += " JOIN calls c ON c.id = a.call_id WHERE a.call_id = $1 AND c.workspace_id = $2"
+		args = append(args, workspaceID)
+	}
+	err := s.pool.QueryRow(ctx, analysisQuery, args...).Scan(&result.Summary, &needsJSON, &objectionsJSON, &result.RefusalReason, &mistakesJSON, &strengthsJSON, &result.NextAction, &criteriaJSON, &rawJSON)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Analysis{}, scoring.Score{}, false, nil
 	}
@@ -65,10 +81,16 @@ FROM call_analyses WHERE call_id = $1`, callID).Scan(&result.Summary, &needsJSON
 	}
 	result.RawJSON = rawJSON
 	var values [9]int
-	err = s.pool.QueryRow(ctx, `
+	scoreQuery := `
 SELECT greeting_score, rapport_score, needs_discovery_score, presentation_score,
        objection_handling_score, next_action_score, communication_score, closing_score, total_score
-FROM call_scores WHERE call_id = $1`, callID).Scan(&values[0], &values[1], &values[2], &values[3], &values[4], &values[5], &values[6], &values[7], &values[8])
+FROM call_scores s`
+	if workspaceID == uuid.Nil {
+		scoreQuery += " WHERE s.call_id = $1"
+	} else {
+		scoreQuery += " JOIN calls c ON c.id = s.call_id WHERE s.call_id = $1 AND c.workspace_id = $2"
+	}
+	err = s.pool.QueryRow(ctx, scoreQuery, args...).Scan(&values[0], &values[1], &values[2], &values[3], &values[4], &values[5], &values[6], &values[7], &values[8])
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, scoring.Score{}, true, nil
 	}

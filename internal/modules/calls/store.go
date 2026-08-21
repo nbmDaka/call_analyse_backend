@@ -10,6 +10,7 @@ import (
 	"call_analyse_backend/internal/modules/auth"
 	"call_analyse_backend/internal/modules/scoring"
 	"call_analyse_backend/internal/modules/transcription"
+	"call_analyse_backend/internal/modules/workspaces"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -29,11 +30,11 @@ func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
 // Create inserts metadata only after the caller has stored the object.
 func (s *PostgresStore) Create(ctx context.Context, call Call) (Call, error) {
 	return scanCall(s.pool.QueryRow(ctx, `
-INSERT INTO calls (id, manager_id, status, original_filename, object_key, content_type, size_bytes)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, manager_id, status, original_filename, object_key, content_type, size_bytes,
+INSERT INTO calls (id, workspace_id, owner_user_id, uploaded_by_user_id, manager_id, status, original_filename, object_key, content_type, size_bytes)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+RETURNING id, workspace_id, owner_user_id, uploaded_by_user_id, manager_id, status, original_filename, object_key, content_type, size_bytes,
           duration_seconds, error_message, created_at, updated_at`,
-		call.ID, call.ManagerID, call.Status, call.OriginalFilename, call.ObjectKey, call.ContentType, call.SizeBytes))
+		call.ID, call.WorkspaceID, call.OwnerUserID, call.UploadedByUserID, call.ManagerID, call.Status, call.OriginalFilename, call.ObjectKey, call.ContentType, call.SizeBytes))
 }
 
 // List applies actor scope in both total and row queries before applying pagination.
@@ -94,14 +95,14 @@ func (s *PostgresStore) FullDetail(ctx context.Context, actor Actor, callID uuid
 		return CallDetail{}, err
 	}
 	var manager auth.PublicUser
-	if err := s.pool.QueryRow(ctx, `SELECT id, email, role, supervisor_id, created_at, updated_at FROM users WHERE id = $1`, call.ManagerID).Scan(&manager.ID, &manager.Email, &manager.Role, &manager.SupervisorID, &manager.CreatedAt, &manager.UpdatedAt); err != nil {
+	if err := s.pool.QueryRow(ctx, `SELECT id, email, platform_role, status, role, supervisor_id, email_verified_at IS NOT NULL, created_at, updated_at FROM users WHERE id = $1`, call.OwnerUserID).Scan(&manager.ID, &manager.Email, &manager.PlatformRole, &manager.Status, &manager.Role, &manager.SupervisorID, &manager.EmailVerified, &manager.CreatedAt, &manager.UpdatedAt); err != nil {
 		return CallDetail{}, fmt.Errorf("load call manager: %w", err)
 	}
-	transcript, transcriptExists, err := transcription.NewPostgresStore(s.pool).Get(ctx, call.ID)
+	transcript, transcriptExists, err := transcription.NewPostgresStore(s.pool).GetInWorkspace(ctx, actor.WorkspaceID, call.ID)
 	if err != nil {
 		return CallDetail{}, err
 	}
-	result, score, analysisExists, err := analysis.NewPostgresStore(s.pool).Get(ctx, call.ID)
+	result, score, analysisExists, err := analysis.NewPostgresStore(s.pool).GetInWorkspace(ctx, actor.WorkspaceID, call.ID)
 	if err != nil {
 		return CallDetail{}, err
 	}
@@ -129,6 +130,11 @@ func (s *PostgresStore) Delete(ctx context.Context, callID uuid.UUID) error {
 	return err
 }
 
+func (s *PostgresStore) DeleteInWorkspace(ctx context.Context, workspaceID, callID uuid.UUID) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM calls WHERE id = $1 AND workspace_id = $2`, callID, workspaceID)
+	return err
+}
+
 func listCountQuery(actor Actor) (string, []any, error) {
 	where, args, err := listScope(actor)
 	if err != nil {
@@ -145,7 +151,7 @@ func listQuery(actor Actor, page Page) (string, []any, error) {
 	limitPlaceholder := len(args) + 1
 	offsetPlaceholder := limitPlaceholder + 1
 	query := fmt.Sprintf(`
-SELECT c.id, c.manager_id, c.status, c.original_filename, c.object_key, c.content_type, c.size_bytes,
+SELECT c.id, c.workspace_id, c.owner_user_id, c.uploaded_by_user_id, c.manager_id, c.status, c.original_filename, c.object_key, c.content_type, c.size_bytes,
        c.duration_seconds, c.error_message, c.created_at, c.updated_at
 FROM calls c
 WHERE %s
@@ -161,7 +167,7 @@ func detailQuery(actor Actor, callID uuid.UUID) (string, []any, error) {
 		return "", nil, err
 	}
 	query := `
-SELECT c.id, c.manager_id, c.status, c.original_filename, c.object_key, c.content_type, c.size_bytes,
+SELECT c.id, c.workspace_id, c.owner_user_id, c.uploaded_by_user_id, c.manager_id, c.status, c.original_filename, c.object_key, c.content_type, c.size_bytes,
        c.duration_seconds, c.error_message, c.created_at, c.updated_at
 FROM calls c
 WHERE c.id = $1 AND ` + where
@@ -169,29 +175,33 @@ WHERE c.id = $1 AND ` + where
 }
 
 func listScope(actor Actor) (string, []any, error) {
-	switch actor.Role {
-	case auth.RoleAdmin:
-		return "TRUE", nil, nil
-	case auth.RoleManager:
-		return "c.manager_id = $1", []any{actor.ID}, nil
-	case auth.RoleSupervisor:
-		return "c.manager_id IN (SELECT id FROM users WHERE supervisor_id = $1)", []any{actor.ID}, nil
+	if actor.WorkspaceID == uuid.Nil || actor.UserID == uuid.Nil || actor.MembershipID == uuid.Nil {
+		return "", nil, ErrInvalidActor
+	}
+	switch actor.WorkspaceRole {
+	case workspaces.RoleOwner, workspaces.RoleAdmin:
+		return "c.workspace_id = $1", []any{actor.WorkspaceID}, nil
+	case workspaces.RoleManager:
+		return "c.workspace_id = $1 AND c.owner_user_id = $2", []any{actor.WorkspaceID, actor.UserID}, nil
+	case workspaces.RoleSupervisor:
+		return `c.workspace_id = $1 AND (c.owner_user_id = $2 OR c.owner_user_id IN (
+SELECT managed.user_id FROM workspace_memberships managed
+WHERE managed.workspace_id = $1 AND managed.supervisor_membership_id = $3
+  AND managed.role = 'manager' AND managed.status = 'active'))`, []any{actor.WorkspaceID, actor.UserID, actor.MembershipID}, nil
 	default:
 		return "", nil, ErrInvalidActor
 	}
 }
 
 func detailScope(actor Actor) (string, []any, error) {
-	switch actor.Role {
-	case auth.RoleAdmin:
-		return "TRUE", nil, nil
-	case auth.RoleManager:
-		return "c.manager_id = $2", []any{actor.ID}, nil
-	case auth.RoleSupervisor:
-		return "c.manager_id IN (SELECT id FROM users WHERE supervisor_id = $2)", []any{actor.ID}, nil
-	default:
-		return "", nil, ErrInvalidActor
+	where, args, err := listScope(actor)
+	if err != nil {
+		return "", nil, err
 	}
+	for i := len(args); i >= 1; i-- {
+		where = strings.ReplaceAll(where, fmt.Sprintf("$%d", i), fmt.Sprintf("$%d", i+1))
+	}
+	return where, args, nil
 }
 
 type callRowScanner interface {
@@ -203,6 +213,9 @@ func scanCall(row callRowScanner) (Call, error) {
 	var status string
 	err := row.Scan(
 		&call.ID,
+		&call.WorkspaceID,
+		&call.OwnerUserID,
+		&call.UploadedByUserID,
 		&call.ManagerID,
 		&status,
 		&call.OriginalFilename,

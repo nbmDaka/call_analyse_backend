@@ -33,3 +33,23 @@ The API enqueues a unique `process_call` task and durably transitions the call t
 object/row are created, the call service compensates by deleting the metadata and
 object. This is best-effort cleanup rather than a distributed transaction; the
 worker remains idempotent for retries and duplicate deliveries.
+
+## D-006: Separate platform identity from workspace authorization
+
+JWTs carry only user identity and platform role. Workspace roles are loaded from
+PostgreSQL for every workspace request so disabling or changing a membership takes
+effect immediately. Platform superadmins use separate platform routes and receive no
+implicit access to call content.
+
+## D-007: Use one workspace abstraction for people and companies
+
+Personal and company tenants share `workspaces` and `workspace_memberships`. Calls
+carry required workspace, owner-user, and uploader-user IDs. The initial supervisor
+hierarchy uses a same-workspace `supervisor_membership_id`, leaving room for teams.
+
+## D-008: Preserve legacy data through additive migration
+
+Migration 000003 creates personal tenants for existing users, creates a deterministic
+legacy company tenant, preserves supervisor relationships, and backfills call
+ownership before enforcing NOT NULL. Legacy role/manager columns and object keys are
+retained temporarily; all new authorization uses memberships and workspace IDs.

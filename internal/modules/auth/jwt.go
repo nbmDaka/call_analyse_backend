@@ -76,10 +76,15 @@ func (m tokenManager) VerifyRefreshTokenHash(hash, token string) bool {
 
 func (m tokenManager) issue(user User, tokenType string, secret []byte, ttl time.Duration) (string, error) {
 	now := time.Now().UTC()
+	platformRole := user.PlatformRole
+	if platformRole == "" {
+		platformRole = PlatformRoleUser
+	}
 	claims := Claims{
-		UserID:    user.ID.String(),
-		Role:      user.Role,
-		TokenType: tokenType,
+		UserID:       user.ID.String(),
+		PlatformRole: platformRole,
+		Role:         user.Role,
+		TokenType:    tokenType,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    tokenIssuer,
 			Subject:   user.ID.String(),
@@ -103,6 +108,12 @@ func (m tokenManager) parse(raw, expectedType string, secret []byte) (Claims, er
 		return Claims{}, ErrInvalidRefreshToken
 	}
 	if claims.TokenType != expectedType || claims.UserID == "" || claims.Subject != claims.UserID {
+		return Claims{}, ErrInvalidRefreshToken
+	}
+	if claims.PlatformRole == "" {
+		claims.PlatformRole = PlatformRoleUser
+	}
+	if claims.PlatformRole != PlatformRoleUser && claims.PlatformRole != PlatformRoleSuperAdmin {
 		return Claims{}, ErrInvalidRefreshToken
 	}
 	return claims, nil

@@ -14,9 +14,9 @@ import (
 
 	"call_analyse_backend/internal/modules/analysis"
 	"call_analyse_backend/internal/modules/calls"
-	"call_analyse_backend/internal/platform/queue"
 	"call_analyse_backend/internal/modules/scoring"
 	"call_analyse_backend/internal/modules/transcription"
+	"call_analyse_backend/internal/platform/queue"
 
 	"github.com/google/uuid"
 )
@@ -71,6 +71,19 @@ func TestProcessorProcessesCallOnceThroughCompleted(t *testing.T) {
 	}
 	if analysisStore.score.Total != 100 {
 		t.Errorf("stored backend score total = %d, want 100", analysisStore.score.Total)
+	}
+}
+
+func TestProcessorRequiresMatchingWorkspaceForTenantTask(t *testing.T) {
+	call := testCall(calls.StatusCompleted)
+	call.WorkspaceID = uuid.New()
+	callStore := &memoryCallStore{call: call}
+	processor := Processor{Calls: callStore, Transcripts: &memoryTranscriptStore{}, Analyses: &memoryAnalysisStore{}, Transcriber: &fakeTranscriber{}, Analyzer: &fakeAnalyzer{}, Objects: memoryObjectStore{}, ProviderTimeout: time.Second}
+	if err := processor.ProcessInWorkspace(context.Background(), uuid.NewString(), call.ID.String()); err == nil {
+		t.Fatal("ProcessInWorkspace() accepted a call from another workspace")
+	}
+	if err := processor.ProcessInWorkspace(context.Background(), call.WorkspaceID.String(), call.ID.String()); err != nil {
+		t.Fatalf("ProcessInWorkspace() matching tenant error = %v", err)
 	}
 }
 
@@ -359,6 +372,14 @@ func (s *memoryCallStore) Get(ctx context.Context, callID uuid.UUID) (calls.Call
 	return s.call, nil
 }
 
+func (s *memoryCallStore) GetInWorkspace(ctx context.Context, workspaceID, callID uuid.UUID) (calls.Call, error) {
+	call, err := s.Get(ctx, callID)
+	if err != nil || call.WorkspaceID != workspaceID {
+		return calls.Call{}, fmt.Errorf("call not found")
+	}
+	return call, nil
+}
+
 func (s *memoryCallStore) Transition(ctx context.Context, callID uuid.UUID, from, to calls.Status, errorMessage *string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -376,6 +397,13 @@ func (s *memoryCallStore) Transition(ctx context.Context, callID uuid.UUID, from
 	s.call.ErrorMessage = errorMessage
 	s.history = append(s.history, to)
 	return nil
+}
+
+func (s *memoryCallStore) TransitionInWorkspace(ctx context.Context, workspaceID, callID uuid.UUID, from, to calls.Status, errorMessage *string) error {
+	if workspaceID != s.call.WorkspaceID {
+		return fmt.Errorf("call not found")
+	}
+	return s.Transition(ctx, callID, from, to, errorMessage)
 }
 
 type multiCallStore struct {

@@ -22,10 +22,21 @@ type CallProcessingStore interface {
 // trusted internal consumers of a queued call ID.
 func (s *PostgresStore) Get(ctx context.Context, callID uuid.UUID) (Call, error) {
 	call, err := scanCall(s.pool.QueryRow(ctx, `
-SELECT id, manager_id, status, original_filename, object_key, content_type, size_bytes,
+SELECT id, workspace_id, owner_user_id, uploaded_by_user_id, manager_id, status, original_filename, object_key, content_type, size_bytes,
        duration_seconds, error_message, created_at, updated_at
 FROM calls
 WHERE id = $1`, callID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Call{}, ErrCallNotFound
+	}
+	return call, err
+}
+
+func (s *PostgresStore) GetInWorkspace(ctx context.Context, workspaceID, callID uuid.UUID) (Call, error) {
+	call, err := scanCall(s.pool.QueryRow(ctx, `
+SELECT id, workspace_id, owner_user_id, uploaded_by_user_id, manager_id, status, original_filename, object_key, content_type, size_bytes,
+       duration_seconds, error_message, created_at, updated_at
+FROM calls WHERE id = $1 AND workspace_id = $2`, callID, workspaceID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Call{}, ErrCallNotFound
 	}
@@ -45,6 +56,22 @@ SET status = $3, error_message = $4, updated_at = NOW()
 WHERE id = $1 AND status = $2`, callID, from, to, errorMessage)
 	if err != nil {
 		return fmt.Errorf("update call status: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return ErrCallStatusChanged
+	}
+	return nil
+}
+
+func (s *PostgresStore) TransitionInWorkspace(ctx context.Context, workspaceID, callID uuid.UUID, from, to Status, errorMessage *string) error {
+	if err := ValidateTransition(from, to); err != nil {
+		return err
+	}
+	result, err := s.pool.Exec(ctx, `
+UPDATE calls SET status = $4, error_message = $5, updated_at = NOW()
+WHERE id = $1 AND workspace_id = $2 AND status = $3`, callID, workspaceID, from, to, errorMessage)
+	if err != nil {
+		return fmt.Errorf("update workspace call status: %w", err)
 	}
 	if result.RowsAffected() != 1 {
 		return ErrCallStatusChanged

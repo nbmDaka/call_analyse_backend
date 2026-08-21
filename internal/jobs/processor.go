@@ -13,8 +13,8 @@ import (
 	"call_analyse_backend/internal/modules/analysis"
 	"call_analyse_backend/internal/modules/calls"
 	"call_analyse_backend/internal/modules/scoring"
-	"call_analyse_backend/internal/platform/storage"
 	"call_analyse_backend/internal/modules/transcription"
+	"call_analyse_backend/internal/platform/storage"
 
 	"github.com/google/uuid"
 )
@@ -92,6 +92,19 @@ func (r *callLockRegistry) Lock(callID uuid.UUID) func() {
 // Process advances a call from its current durable checkpoint. It returns a
 // sanitized error after marking failures so an Asynq handler can retry the job.
 func (p *Processor) Process(ctx context.Context, callID string) error {
+	return p.process(ctx, uuid.Nil, callID)
+}
+
+// ProcessInWorkspace loads the call through both IDs before touching audio or results.
+func (p *Processor) ProcessInWorkspace(ctx context.Context, workspaceID, callID string) error {
+	parsedWorkspaceID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return fmt.Errorf("parse workspace ID: %w", err)
+	}
+	return p.process(ctx, parsedWorkspaceID, callID)
+}
+
+func (p *Processor) process(ctx context.Context, workspaceID uuid.UUID, callID string) error {
 	if err := p.validate(); err != nil {
 		return err
 	}
@@ -102,7 +115,18 @@ func (p *Processor) Process(ctx context.Context, callID string) error {
 	release := p.callLocks.Lock(id)
 	defer release()
 
-	call, err := p.Calls.Get(ctx, id)
+	var call calls.Call
+	if workspaceID != uuid.Nil {
+		scoped, ok := p.Calls.(interface {
+			GetInWorkspace(context.Context, uuid.UUID, uuid.UUID) (calls.Call, error)
+		})
+		if !ok {
+			return errors.New("call store does not support workspace scope")
+		}
+		call, err = scoped.GetInWorkspace(ctx, workspaceID, id)
+	} else {
+		call, err = p.Calls.Get(ctx, id)
+	}
 	if err != nil {
 		return fmt.Errorf("load call: %w", err)
 	}
@@ -112,65 +136,65 @@ func (p *Processor) Process(ctx context.Context, callID string) error {
 		case calls.StatusCompleted:
 			return nil
 		case calls.StatusFailed:
-			if err := p.transition(ctx, id, &call, calls.StatusQueued, nil); err != nil {
+			if err := p.transition(ctx, workspaceID, id, &call, calls.StatusQueued, nil); err != nil {
 				return err
 			}
 		case calls.StatusUploaded:
-			if err := p.transition(ctx, id, &call, calls.StatusTranscribing, nil); err != nil {
+			if err := p.transition(ctx, workspaceID, id, &call, calls.StatusTranscribing, nil); err != nil {
 				return err
 			}
 		case calls.StatusQueued:
-			if err := p.transition(ctx, id, &call, calls.StatusTranscribing, nil); err != nil {
+			if err := p.transition(ctx, workspaceID, id, &call, calls.StatusTranscribing, nil); err != nil {
 				return err
 			}
 		case calls.StatusTranscribing:
 			transcript, exists, err := p.Transcripts.Get(ctx, id)
 			if err != nil {
-				return p.fail(ctx, id, call, processingFailure)
+				return p.fail(ctx, workspaceID, id, call, processingFailure)
 			}
 			if !exists {
 				transcript, err = p.transcribe(ctx, call)
 				if err != nil {
-					return p.fail(ctx, id, call, transcriptionProviderFailure)
+					return p.fail(ctx, workspaceID, id, call, transcriptionProviderFailure)
 				}
 				if err := p.Transcripts.Upsert(ctx, id, transcript); err != nil {
-					return p.fail(ctx, id, call, processingFailure)
+					return p.fail(ctx, workspaceID, id, call, processingFailure)
 				}
 			}
-			if err := p.transition(ctx, id, &call, calls.StatusTranscribed, nil); err != nil {
+			if err := p.transition(ctx, workspaceID, id, &call, calls.StatusTranscribed, nil); err != nil {
 				return err
 			}
 		case calls.StatusTranscribed:
-			if err := p.transition(ctx, id, &call, calls.StatusAnalyzing, nil); err != nil {
+			if err := p.transition(ctx, workspaceID, id, &call, calls.StatusAnalyzing, nil); err != nil {
 				return err
 			}
 		case calls.StatusAnalyzing:
 			exists, err := p.Analyses.Exists(ctx, id)
 			if err != nil {
-				return p.fail(ctx, id, call, processingFailure)
+				return p.fail(ctx, workspaceID, id, call, processingFailure)
 			}
 			if !exists {
 				transcript, transcriptExists, err := p.Transcripts.Get(ctx, id)
 				if err != nil || !transcriptExists {
-					return p.fail(ctx, id, call, processingFailure)
+					return p.fail(ctx, workspaceID, id, call, processingFailure)
 				}
 				result, err := p.analyze(ctx, transcript)
 				if err != nil {
-					return p.fail(ctx, id, call, analysisProviderFailure)
+					return p.fail(ctx, workspaceID, id, call, analysisProviderFailure)
 				}
 				validated, err := validateAnalysis(result)
 				if err != nil {
-					return p.fail(ctx, id, call, analysisProviderFailure)
+					return p.fail(ctx, workspaceID, id, call, analysisProviderFailure)
 				}
 				score, err := scoring.Calculate(validated.CriterionResults)
 				if err != nil {
-					return p.fail(ctx, id, call, analysisProviderFailure)
+					return p.fail(ctx, workspaceID, id, call, analysisProviderFailure)
 				}
 				if err := p.Analyses.UpsertWithScore(ctx, id, validated, score); err != nil {
-					return p.fail(ctx, id, call, processingFailure)
+					return p.fail(ctx, workspaceID, id, call, processingFailure)
 				}
 			}
-			if err := p.transition(ctx, id, &call, calls.StatusCompleted, nil); err != nil {
+			if err := p.transition(ctx, workspaceID, id, &call, calls.StatusCompleted, nil); err != nil {
 				return err
 			}
 		default:
@@ -189,8 +213,20 @@ func (p *Processor) validate() error {
 	return nil
 }
 
-func (p *Processor) transition(ctx context.Context, callID uuid.UUID, call *calls.Call, to calls.Status, errorMessage *string) error {
-	if err := p.Calls.Transition(ctx, callID, call.Status, to, errorMessage); err != nil {
+func (p *Processor) transition(ctx context.Context, workspaceID, callID uuid.UUID, call *calls.Call, to calls.Status, errorMessage *string) error {
+	var err error
+	if workspaceID != uuid.Nil {
+		scoped, ok := p.Calls.(interface {
+			TransitionInWorkspace(context.Context, uuid.UUID, uuid.UUID, calls.Status, calls.Status, *string) error
+		})
+		if !ok {
+			return errors.New("call store does not support workspace transitions")
+		}
+		err = scoped.TransitionInWorkspace(ctx, workspaceID, callID, call.Status, to, errorMessage)
+	} else {
+		err = p.Calls.Transition(ctx, callID, call.Status, to, errorMessage)
+	}
+	if err != nil {
 		return fmt.Errorf("transition call to %q: %w", to, err)
 	}
 	call.Status = to
@@ -198,9 +234,9 @@ func (p *Processor) transition(ctx context.Context, callID uuid.UUID, call *call
 	return nil
 }
 
-func (p *Processor) fail(ctx context.Context, callID uuid.UUID, call calls.Call, message string) error {
+func (p *Processor) fail(ctx context.Context, workspaceID, callID uuid.UUID, call calls.Call, message string) error {
 	if call.Status != calls.StatusFailed {
-		if err := p.transition(ctx, callID, &call, calls.StatusFailed, &message); err != nil {
+		if err := p.transition(ctx, workspaceID, callID, &call, calls.StatusFailed, &message); err != nil {
 			return err
 		}
 	}

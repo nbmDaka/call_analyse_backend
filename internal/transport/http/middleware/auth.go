@@ -8,20 +8,23 @@ import (
 	"strings"
 
 	"call_analyse_backend/internal/modules/auth"
+	"call_analyse_backend/internal/modules/workspaces"
 
 	"github.com/google/uuid"
 )
 
 type claimsContextKey struct{}
 type actorContextKey struct{}
+type workspaceActorContextKey struct{}
 
 // ErrUnauthenticated indicates a missing, malformed, or invalid bearer identity.
 var ErrUnauthenticated = errors.New("unauthenticated")
 
 // Actor is the minimal authenticated identity handlers pass to scoped services.
 type Actor struct {
-	ID   uuid.UUID
-	Role auth.Role
+	ID           uuid.UUID
+	PlatformRole workspaces.PlatformRole
+	Role         auth.Role // Deprecated compatibility value.
 }
 
 // Authenticate verifies a Bearer access token and attaches its claims to the request context.
@@ -54,10 +57,10 @@ func ParseActor(r *http.Request, tokens auth.TokenManager) (Actor, error) {
 		return Actor{}, ErrUnauthenticated
 	}
 	id, err := uuid.Parse(claims.UserID)
-	if err != nil || !validRole(claims.Role) {
+	if err != nil || !validPlatformRole(claims.PlatformRole) {
 		return Actor{}, ErrUnauthenticated
 	}
-	return Actor{ID: id, Role: claims.Role}, nil
+	return Actor{ID: id, PlatformRole: claims.PlatformRole, Role: claims.Role}, nil
 }
 
 // WithActor adds a successfully validated actor to a request context.
@@ -81,8 +84,17 @@ func HasRole(actorRole auth.Role, allowed ...auth.Role) bool {
 	return false
 }
 
-func validRole(role auth.Role) bool {
-	return role == auth.RoleAdmin || role == auth.RoleSupervisor || role == auth.RoleManager
+func validPlatformRole(role workspaces.PlatformRole) bool {
+	return role == workspaces.PlatformRoleUser || role == workspaces.PlatformRoleSuperAdmin
+}
+
+func WithWorkspaceActor(ctx context.Context, actor workspaces.Actor) context.Context {
+	return context.WithValue(ctx, workspaceActorContextKey{}, actor)
+}
+
+func WorkspaceActorFromContext(ctx context.Context) (workspaces.Actor, bool) {
+	actor, ok := ctx.Value(workspaceActorContextKey{}).(workspaces.Actor)
+	return actor, ok
 }
 
 // ClaimsFromContext returns authentication claims added by Authenticate.

@@ -5,9 +5,12 @@ import (
 	"net/http"
 	"time"
 
+	"call_analyse_backend/internal/modules/auth"
+	"call_analyse_backend/internal/modules/workspaces"
 	"call_analyse_backend/internal/transport/http/middleware"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 func NewRouter(deps Dependencies) http.Handler {
@@ -40,6 +43,28 @@ func NewRouter(deps Dependencies) http.Handler {
 		api.Group(func(protected chi.Router) {
 			protected.Use(s.authenticate)
 			protected.Get("/me", s.me)
+			protected.Get("/workspaces", s.listWorkspaces)
+			protected.Post("/workspaces", s.createWorkspace)
+			protected.Route("/workspaces/{workspaceID}", func(workspace chi.Router) {
+				workspace.Use(s.resolveWorkspaceActor)
+				workspace.Get("/", s.getWorkspace)
+				workspace.Patch("/", s.renameWorkspace)
+				workspace.Get("/members", s.listMembers)
+				workspace.Post("/members", s.createMember)
+				workspace.Patch("/members/{membershipID}", s.updateMember)
+				workspace.Delete("/members/{membershipID}", s.deleteMember)
+				workspace.Get("/calls", s.listCalls)
+				workspace.Post("/calls", s.createCall)
+				workspace.Get("/calls/{id}", s.detailCall)
+				workspace.Get("/dashboard", s.dashboardSummary)
+			})
+			protected.Get("/platform/workspaces", s.platformWorkspaces)
+			protected.Post("/platform/workspaces", s.platformCreateWorkspace)
+			protected.Get("/platform/users", s.platformUsers)
+			protected.Get("/platform/metrics", s.platformMetrics)
+			protected.Patch("/platform/workspaces/{workspaceID}/status", s.platformWorkspaceStatus)
+			protected.Patch("/platform/users/{userID}/status", s.platformUserStatus)
+			// Deprecated compatibility routes. New clients must use explicit workspace routes.
 			protected.Post("/calls", s.createCall)
 			protected.Get("/calls", s.listCalls)
 			protected.Get("/calls/{id}", s.detailCall)
@@ -47,6 +72,27 @@ func NewRouter(deps Dependencies) http.Handler {
 		})
 	})
 	return r
+}
+
+func (s server) resolveWorkspaceActor(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		identity, ok := middleware.ActorFromContext(r.Context())
+		if !ok || s.deps.WorkspaceActors == nil {
+			writeError(w, r, middleware.ErrUnauthenticated)
+			return
+		}
+		workspaceID, err := uuid.Parse(chi.URLParam(r, "workspaceID"))
+		if err != nil {
+			writeError(w, r, workspaces.ErrWorkspaceNotFound)
+			return
+		}
+		actor, err := s.deps.WorkspaceActors.ResolveActor(r.Context(), identity.ID, identity.PlatformRole, workspaceID)
+		if err != nil {
+			writeError(w, r, err)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(middleware.WithWorkspaceActor(r.Context(), actor)))
+	})
 }
 
 func (s server) authenticate(next http.Handler) http.Handler {
@@ -59,6 +105,17 @@ func (s server) authenticate(next http.Handler) http.Handler {
 		if err != nil {
 			writeError(w, r, err)
 			return
+		}
+		if s.deps.Authentication != nil {
+			user, err := s.deps.Authentication.Me(r.Context(), actor.ID)
+			if err != nil {
+				writeError(w, r, middleware.ErrUnauthenticated)
+				return
+			}
+			if user.Status == "suspended" {
+				writeError(w, r, auth.ErrUserSuspended)
+				return
+			}
 		}
 		next.ServeHTTP(w, r.WithContext(middleware.WithActor(r.Context(), actor)))
 	})

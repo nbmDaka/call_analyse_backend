@@ -15,6 +15,9 @@ import (
 	"call_analyse_backend/internal/modules/auth"
 	"call_analyse_backend/internal/modules/calls"
 	"call_analyse_backend/internal/modules/dashboard"
+	"call_analyse_backend/internal/modules/memberships"
+	platformadmin "call_analyse_backend/internal/modules/platform"
+	"call_analyse_backend/internal/modules/workspaces"
 	"call_analyse_backend/internal/platform/database"
 	"call_analyse_backend/internal/platform/queue"
 	"call_analyse_backend/internal/platform/storage"
@@ -74,9 +77,21 @@ func main() {
 		_, err = client.EnqueueContext(enqueueCtx, task)
 		return err
 	}
+	enqueueWorkspace := func(enqueueCtx context.Context, workspaceID, callID string) error {
+		task, err := queue.NewWorkspaceProcessCallTask(workspaceID, callID)
+		if err != nil {
+			return err
+		}
+		_, err = client.EnqueueContext(enqueueCtx, task)
+		return err
+	}
 	callStore := calls.NewPostgresStore(pool)
 	callService := calls.NewService(callStore, objects, cfg.MaxUploadBytes)
 	dashboardService := dashboard.NewService(dashboard.NewPostgresStore(pool))
+	workspaceStore := workspaces.NewPostgresStore(pool)
+	workspaceService := workspaces.NewService(workspaceStore)
+	membershipService := memberships.NewService(memberships.NewPostgresStore(pool))
+	platformService := platformadmin.NewService(platformadmin.NewPostgresStore(pool))
 	ready := func(readyCtx context.Context) error {
 		if err := pool.Ping(readyCtx); err != nil {
 			return err
@@ -86,7 +101,13 @@ func main() {
 		}
 		return objects.Ready(readyCtx)
 	}
-	handler := httpapi.NewRouter(httpapi.Dependencies{Authentication: authService, CORSAllowedOrigins: cfg.CORSAllowedOrigins, Calls: callService, Dashboard: dashboardService, Tokens: tokens, EnqueueCall: enqueue, Ready: ready, MaxUploadBytes: cfg.MaxUploadBytes, RequestTimeout: cfg.ProviderTimeout, Logger: logger})
+	handler := httpapi.NewRouter(httpapi.Dependencies{
+		Authentication: authService, CORSAllowedOrigins: cfg.CORSAllowedOrigins,
+		Calls: callService, Dashboard: dashboardService, Workspaces: workspaceService,
+		WorkspaceActors: workspaceStore, Memberships: membershipService, Platform: platformService,
+		Tokens: tokens, EnqueueCall: enqueue, EnqueueWorkspaceCall: enqueueWorkspace,
+		Ready: ready, MaxUploadBytes: cfg.MaxUploadBytes, RequestTimeout: cfg.ProviderTimeout, Logger: logger,
+	})
 	httpServer := &http.Server{Addr: fmt.Sprintf(":%d", cfg.HTTPPort), Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if serveErr := httpServer.ListenAndServe(); serveErr != nil && serveErr != http.ErrServerClosed {

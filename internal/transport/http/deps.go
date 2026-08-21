@@ -9,6 +9,9 @@ import (
 	"call_analyse_backend/internal/modules/auth"
 	"call_analyse_backend/internal/modules/calls"
 	"call_analyse_backend/internal/modules/dashboard"
+	"call_analyse_backend/internal/modules/memberships"
+	platformadmin "call_analyse_backend/internal/modules/platform"
+	"call_analyse_backend/internal/modules/workspaces"
 
 	"github.com/google/uuid"
 )
@@ -35,18 +38,46 @@ type dashboardService interface {
 	Summary(context.Context, calls.Actor) (dashboard.Summary, error)
 }
 
+type workspaceService interface {
+	List(context.Context, uuid.UUID) ([]workspaces.AvailableWorkspace, error)
+	Get(context.Context, uuid.UUID, uuid.UUID) (workspaces.AvailableWorkspace, error)
+	CreateCompany(context.Context, uuid.UUID, string) (workspaces.AvailableWorkspace, error)
+	Rename(context.Context, workspaces.Actor, string) (workspaces.Workspace, error)
+}
+
+type membershipService interface {
+	List(context.Context, workspaces.Actor) ([]workspaces.Membership, error)
+	Create(context.Context, workspaces.Actor, memberships.CreateInput) (workspaces.Membership, error)
+	Update(context.Context, workspaces.Actor, uuid.UUID, memberships.UpdateInput) (workspaces.Membership, error)
+	Delete(context.Context, workspaces.Actor, uuid.UUID) error
+}
+
+type platformService interface {
+	CreateCompany(context.Context, uuid.UUID, workspaces.PlatformRole, uuid.UUID, string) (workspaces.Workspace, error)
+	ListWorkspaces(context.Context, workspaces.PlatformRole, *workspaces.Type) ([]workspaces.Workspace, error)
+	ListUsers(context.Context, workspaces.PlatformRole) ([]platformadmin.User, error)
+	SetWorkspaceStatus(context.Context, uuid.UUID, workspaces.PlatformRole, uuid.UUID, workspaces.Status) (workspaces.Workspace, error)
+	SetUserStatus(context.Context, uuid.UUID, workspaces.PlatformRole, uuid.UUID, string) (platformadmin.User, error)
+	SystemMetrics(context.Context, workspaces.PlatformRole) (platformadmin.Metrics, error)
+}
+
 // Dependencies are the application boundaries required by the HTTP layer.
 type Dependencies struct {
-	Authentication     authService
-	CORSAllowedOrigins []string
-	Calls              callsService
-	Dashboard          dashboardService
-	Tokens             auth.TokenManager
-	EnqueueCall        func(context.Context, string) error
-	Ready              func(context.Context) error
-	MaxUploadBytes     int64
-	RequestTimeout     time.Duration
-	Logger             *slog.Logger
+	Authentication       authService
+	CORSAllowedOrigins   []string
+	Calls                callsService
+	Dashboard            dashboardService
+	Workspaces           workspaceService
+	WorkspaceActors      workspaces.ActorResolver
+	Memberships          membershipService
+	Platform             platformService
+	Tokens               auth.TokenManager
+	EnqueueCall          func(context.Context, string) error
+	EnqueueWorkspaceCall func(context.Context, string, string) error
+	Ready                func(context.Context) error
+	MaxUploadBytes       int64
+	RequestTimeout       time.Duration
+	Logger               *slog.Logger
 }
 
 type server struct {

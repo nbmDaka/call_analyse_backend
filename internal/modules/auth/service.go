@@ -69,6 +69,9 @@ func (s Service) Login(ctx context.Context, email, password string) (TokenPair, 
 	if user.EmailVerifiedAt == nil {
 		return TokenPair{}, ErrEmailNotVerified
 	}
+	if user.Status == "suspended" {
+		return TokenPair{}, ErrUserSuspended
+	}
 	return s.issuePair(ctx, user, "")
 }
 
@@ -93,13 +96,21 @@ func (s Service) Register(ctx context.Context, email, password string) error {
 		now := time.Now().UTC()
 		verifiedAt = &now
 	}
-	user, err := s.users.Create(ctx, User{
+	candidate := User{
 		ID:              uuid.New(),
 		Email:           email,
 		PasswordHash:    hash,
 		Role:            RoleManager,
+		PlatformRole:    PlatformRoleUser,
+		Status:          "active",
 		EmailVerifiedAt: verifiedAt,
-	})
+	}
+	var user User
+	if registrar, ok := s.users.(RegistrationStore); ok {
+		user, err = registrar.CreateWithPersonalWorkspace(ctx, candidate, personalWorkspaceName(email))
+	} else {
+		user, err = s.users.Create(ctx, candidate)
+	}
 	if err != nil {
 		if errors.Is(err, ErrEmailAlreadyExists) && s.emailFlowsEnabled {
 			existing, lookupErr := s.users.FindByEmail(ctx, email)
@@ -207,6 +218,9 @@ func (s Service) Refresh(ctx context.Context, rawToken string) (TokenPair, error
 	if err != nil {
 		return TokenPair{}, ErrInvalidRefreshToken
 	}
+	if user.Status == "suspended" {
+		return TokenPair{}, ErrUserSuspended
+	}
 	return s.issuePair(ctx, user, hash)
 }
 
@@ -238,6 +252,14 @@ func (s Service) BootstrapAdmin(ctx context.Context, email, password string) (Pu
 	}
 	existing, err := s.users.FindByEmail(ctx, email)
 	if err == nil {
+		if existing.PlatformRole != PlatformRoleSuperAdmin {
+			if roles, ok := s.users.(PlatformRoleStore); ok {
+				existing, err = roles.SetPlatformRole(ctx, existing.ID, PlatformRoleSuperAdmin)
+				if err != nil {
+					return PublicUser{}, false, err
+				}
+			}
+		}
 		return toPublicUser(existing), false, nil
 	}
 	if !errors.Is(err, ErrUserNotFound) {
@@ -248,7 +270,7 @@ func (s Service) BootstrapAdmin(ctx context.Context, email, password string) (Pu
 		return PublicUser{}, false, fmt.Errorf("hash bootstrap admin password: %w", err)
 	}
 	now := time.Now().UTC()
-	created, err := s.users.Create(ctx, User{ID: uuid.New(), Email: email, PasswordHash: hash, Role: RoleAdmin, EmailVerifiedAt: &now})
+	created, err := s.users.Create(ctx, User{ID: uuid.New(), Email: email, PasswordHash: hash, Role: RoleManager, PlatformRole: PlatformRoleSuperAdmin, Status: "active", EmailVerifiedAt: &now})
 	if errors.Is(err, ErrEmailAlreadyExists) {
 		existing, lookupErr := s.users.FindByEmail(ctx, email)
 		if lookupErr != nil {
@@ -340,10 +362,20 @@ func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
+func personalWorkspaceName(email string) string {
+	name := strings.TrimSpace(strings.SplitN(email, "@", 2)[0])
+	if name == "" {
+		name = "Personal"
+	}
+	return name + "'s workspace"
+}
+
 func toPublicUser(user User) PublicUser {
 	return PublicUser{
 		ID:            user.ID,
 		Email:         user.Email,
+		PlatformRole:  platformRole(user.PlatformRole),
+		Status:        userStatus(user.Status),
 		Role:          user.Role,
 		SupervisorID:  user.SupervisorID,
 		EmailVerified: user.EmailVerifiedAt != nil,

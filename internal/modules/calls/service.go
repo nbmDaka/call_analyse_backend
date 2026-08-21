@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"call_analyse_backend/internal/modules/auth"
+	"call_analyse_backend/internal/modules/workspaces"
 	"call_analyse_backend/internal/platform/storage"
 
 	"github.com/google/uuid"
@@ -22,8 +23,35 @@ var (
 
 // Actor is the authenticated identity used for call ownership checks.
 type Actor struct {
-	ID   uuid.UUID
-	Role auth.Role
+	ID               uuid.UUID // Deprecated legacy identity.
+	Role             auth.Role // Deprecated legacy role.
+	UserID           uuid.UUID
+	WorkspaceID      uuid.UUID
+	MembershipID     uuid.UUID
+	WorkspaceRole    workspaces.Role
+	PlatformRole     workspaces.PlatformRole
+	MembershipStatus workspaces.MembershipStatus
+	WorkspaceStatus  workspaces.Status
+	WorkspaceType    workspaces.Type
+}
+
+func ActorFromWorkspace(actor workspaces.Actor) Actor {
+	return Actor{UserID: actor.UserID, WorkspaceID: actor.WorkspaceID, MembershipID: actor.MembershipID,
+		WorkspaceRole: actor.WorkspaceRole, PlatformRole: actor.PlatformRole,
+		MembershipStatus: actor.MembershipStatus, WorkspaceStatus: actor.WorkspaceStatus, WorkspaceType: actor.WorkspaceType}
+}
+
+func (a Actor) workspaceActor() workspaces.Actor {
+	return workspaces.Actor{UserID: a.UserID, WorkspaceID: a.WorkspaceID, MembershipID: a.MembershipID,
+		WorkspaceRole: a.WorkspaceRole, PlatformRole: a.PlatformRole,
+		MembershipStatus: a.MembershipStatus, WorkspaceStatus: a.WorkspaceStatus, WorkspaceType: a.WorkspaceType}
+}
+
+func (a Actor) userID() uuid.UUID {
+	if a.UserID != uuid.Nil {
+		return a.UserID
+	}
+	return a.ID
 }
 
 // Upload is a validated-at-the-boundary stream of untrusted client audio.
@@ -71,7 +99,14 @@ func NewService(calls CallStore, objects storage.ObjectStore, maxBytes int64) Se
 // Create streams a validated upload to object storage, then inserts its metadata.
 // If metadata persistence fails, it attempts to remove the just-uploaded object.
 func (s Service) Create(ctx context.Context, actor Actor, upload Upload) (Call, error) {
-	if actor.ID == uuid.Nil {
+	userID := actor.userID()
+	if userID == uuid.Nil {
+		return Call{}, ErrInvalidActor
+	}
+	if actor.WorkspaceID != uuid.Nil && !actor.workspaceActor().CanUpload() {
+		if actor.WorkspaceStatus == workspaces.StatusSuspended {
+			return Call{}, workspaces.ErrWorkspaceSuspended
+		}
 		return Call{}, ErrInvalidActor
 	}
 	if upload.Reader == nil {
@@ -83,13 +118,20 @@ func (s Service) Create(ctx context.Context, actor Actor, upload Upload) (Call, 
 
 	call := Call{
 		ID:               uuid.New(),
-		ManagerID:        actor.ID,
+		WorkspaceID:      actor.WorkspaceID,
+		OwnerUserID:      userID,
+		UploadedByUserID: userID,
+		ManagerID:        userID,
 		Status:           StatusUploaded,
 		OriginalFilename: upload.Filename,
 		ContentType:      upload.ContentType,
 		SizeBytes:        upload.Size,
 	}
-	call.ObjectKey = "calls/" + call.ID.String() + "/" + uuid.NewString() + strings.ToLower(filepath.Ext(upload.Filename))
+	prefix := "calls/"
+	if call.WorkspaceID != uuid.Nil {
+		prefix = "workspaces/" + call.WorkspaceID.String() + "/calls/"
+	}
+	call.ObjectKey = prefix + call.ID.String() + "/" + uuid.NewString() + strings.ToLower(filepath.Ext(upload.Filename))
 
 	if err := s.objects.Put(ctx, call.ObjectKey, upload.Reader, call.SizeBytes, call.ContentType); err != nil {
 		return Call{}, fmt.Errorf("store call audio: %w", err)
@@ -125,6 +167,24 @@ func (s Service) Queue(ctx context.Context, callID uuid.UUID) error {
 	return store.Transition(ctx, callID, call.Status, StatusQueued, nil)
 }
 
+func (s Service) QueueInWorkspace(ctx context.Context, workspaceID, callID uuid.UUID) error {
+	store, ok := s.calls.(interface {
+		GetInWorkspace(context.Context, uuid.UUID, uuid.UUID) (Call, error)
+		TransitionInWorkspace(context.Context, uuid.UUID, uuid.UUID, Status, Status, *string) error
+	})
+	if !ok {
+		return fmt.Errorf("call store does not support workspace queue transitions")
+	}
+	call, err := store.GetInWorkspace(ctx, workspaceID, callID)
+	if err != nil {
+		return err
+	}
+	if call.Status == StatusQueued {
+		return nil
+	}
+	return store.TransitionInWorkspace(ctx, workspaceID, callID, call.Status, StatusQueued, nil)
+}
+
 // FullDetail exposes the enriched read model through the application service.
 // Stores without enrichment support still receive a safe processing-pending
 // envelope, which keeps test doubles and alternate stores compatible.
@@ -145,7 +205,15 @@ func (s Service) FullDetail(ctx context.Context, actor Actor, callID uuid.UUID) 
 // It is best-effort at the HTTP boundary; the original enqueue error remains
 // the response while the durable row cannot be stranded for this failure mode.
 func (s Service) RollbackCreate(ctx context.Context, call Call) error {
-	if deleter, ok := s.calls.(interface {
+	if call.WorkspaceID != uuid.Nil {
+		if deleter, ok := s.calls.(interface {
+			DeleteInWorkspace(context.Context, uuid.UUID, uuid.UUID) error
+		}); ok {
+			if err := deleter.DeleteInWorkspace(ctx, call.WorkspaceID, call.ID); err != nil {
+				return err
+			}
+		}
+	} else if deleter, ok := s.calls.(interface {
 		Delete(context.Context, uuid.UUID) error
 	}); ok {
 		if err := deleter.Delete(ctx, call.ID); err != nil {
@@ -157,7 +225,7 @@ func (s Service) RollbackCreate(ctx context.Context, call Call) error {
 
 // List delegates scoped selection to the persistence layer before pagination.
 func (s Service) List(ctx context.Context, actor Actor, page Page) (CallPage, error) {
-	if actor.ID == uuid.Nil {
+	if actor.userID() == uuid.Nil {
 		return CallPage{}, ErrInvalidActor
 	}
 	page, err := normalizePage(page)
@@ -169,7 +237,7 @@ func (s Service) List(ctx context.Context, actor Actor, page Page) (CallPage, er
 
 // Detail returns one call only when the scoped store can select it.
 func (s Service) Detail(ctx context.Context, actor Actor, callID uuid.UUID) (Call, error) {
-	if actor.ID == uuid.Nil {
+	if actor.userID() == uuid.Nil {
 		return Call{}, ErrInvalidActor
 	}
 	call, err := s.calls.Detail(ctx, actor, callID)

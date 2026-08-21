@@ -1,5 +1,21 @@
 # Current state
 
+## Multi-tenant workspace implementation (2026-08-21)
+
+- Added personal/company workspaces and independent owner/admin/supervisor/manager
+  memberships, including current-state actor resolution on every workspace request.
+- Registration atomically creates a user, personal workspace, and owner membership.
+- Added explicit workspace calls/dashboard routes, membership management, platform
+  user/workspace administration, system metrics, and audited platform mutations.
+- Calls now persist workspace, owner, and uploader IDs; new MinIO keys and Asynq
+  payloads include the workspace ID. Existing object keys remain readable.
+- Manager, supervisor, workspace admin/owner SQL scopes apply before pagination,
+  detail selection, and dashboard aggregation. Cross-tenant detail is hidden as 404.
+- The React client selects and persists an active workspace, uses tenant-aware query
+  keys, and provides members and platform administration views in Russian/Kazakh.
+- Migration 000003 creates and backfills the tenant model while retaining deprecated
+  `users.role`, `users.supervisor_id`, and `calls.manager_id` for rollback compatibility.
+
 ## Implemented in Tasks 1-9
 
 - Go module and environment-based configuration contract.
@@ -40,26 +56,31 @@
 
 ## Not implemented
 
-- Docker runtime smoke verification remains pending because the Docker Desktop
-  Linux engine is unavailable in this environment.
 - README refresh is pending because the existing file contains invalid UTF-8 for
   the repository patch tool; API and architecture docs are current.
-- Live PostgreSQL/MinIO/Redis integration and real Gemini execution remain
-  unverified; unit tests use fakes and local HTTP test servers.
+- Real Gemini execution remains unverified. The multi-tenant Docker smoke used the
+  deterministic development provider and isolated temporary infrastructure.
 - Worker memory usage is bounded by the configured upload limit but still reads
   one audio object into memory for provider calls; scale-out worker coordination
   remains process-local in this MVP.
+- Platform support access to transcript/audio content is intentionally not exposed.
+  A future explicit support flow must write an audit event before returning content;
+  ordinary platform endpoints never grant silent workspace access.
+- Invitation delivery/acceptance and team tables are future extensions; membership
+  creation currently activates an existing account directly.
 
 ## Verification status
 
-Task 8 focused HTTP/dashboard tests and the full Go test, vet, and build checks
-passed. No Docker runtime smoke test, live PostgreSQL or MinIO integration, Redis
-enqueue, or real Gemini call has been performed. `git diff --check` still reports
-pre-existing trailing whitespace in the approved plan/spec documents.
+The full Go test, vet, and build checks pass. Migration 000003 passed against seeded
+legacy data in isolated PostgreSQL 16. An isolated Compose project brought up API,
+worker, PostgreSQL, Redis, and MinIO; readiness, platform company creation, and its
+audit event were verified. No real Gemini call was performed.
 
 The companion `call_analyse_frontend` repository now consumes the implemented auth,
-dashboard, calls, upload, and call-detail API vertical slice. Frontend verification
-and browser smoke testing remain separate from backend runtime checks; the MVP client
-uses localStorage for its token session and polls non-terminal call details.
+dashboard, calls, upload, and call-detail API vertical slice. Vitest, TypeScript,
+production build, and 22 Chromium Playwright E2E scenarios pass, including a tenant
+switch cache-isolation scenario. The in-app browser was unavailable, so no separate
+manual in-app smoke was performed. The MVP client uses localStorage for its token
+session and polls non-terminal call details.
 The API also exposes a configured CORS allowlist for the separate Vite development
 origin, and the frontend deduplicates concurrent refresh requests.

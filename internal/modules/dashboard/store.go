@@ -5,9 +5,10 @@ import (
 	"context"
 	"fmt"
 
-	"call_analyse_backend/internal/modules/auth"
 	"call_analyse_backend/internal/modules/calls"
+	"call_analyse_backend/internal/modules/workspaces"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -69,13 +70,19 @@ WHERE ` + where, args, nil
 }
 
 func dashboardScope(actor calls.Actor) (string, []any, error) {
-	switch actor.Role {
-	case auth.RoleAdmin:
-		return "TRUE", nil, nil
-	case auth.RoleManager:
-		return "c.manager_id = $1", []any{actor.ID}, nil
-	case auth.RoleSupervisor:
-		return "c.manager_id IN (SELECT id FROM users WHERE supervisor_id = $1)", []any{actor.ID}, nil
+	if actor.WorkspaceID == uuid.Nil || actor.UserID == uuid.Nil || actor.MembershipID == uuid.Nil {
+		return "", nil, calls.ErrInvalidActor
+	}
+	switch actor.WorkspaceRole {
+	case workspaces.RoleOwner, workspaces.RoleAdmin:
+		return "c.workspace_id = $1", []any{actor.WorkspaceID}, nil
+	case workspaces.RoleManager:
+		return "c.workspace_id = $1 AND c.owner_user_id = $2", []any{actor.WorkspaceID, actor.UserID}, nil
+	case workspaces.RoleSupervisor:
+		return `c.workspace_id = $1 AND (c.owner_user_id = $2 OR c.owner_user_id IN (
+SELECT managed.user_id FROM workspace_memberships managed
+WHERE managed.workspace_id = $1 AND managed.supervisor_membership_id = $3
+  AND managed.role = 'manager' AND managed.status = 'active'))`, []any{actor.WorkspaceID, actor.UserID, actor.MembershipID}, nil
 	default:
 		return "", nil, calls.ErrInvalidActor
 	}
