@@ -14,7 +14,7 @@ import (
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
-	cfg, err := config.Load()
+	cfg, err := config.LoadDatabase()
 	if err != nil {
 		logger.Error("migration startup configuration failed", "error", err)
 		os.Exit(1)

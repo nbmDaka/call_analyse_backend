@@ -66,6 +66,20 @@ jobs:
             set -eu
             cd /home/nurdaulet/apps/call-analyse-backend
             git pull --ff-only origin main
-            docker compose up -d --build
-            curl --fail --silent --show-error http://127.0.0.1:18080/health/live
+            if ! docker compose up -d --build; then
+              docker compose ps -a
+              docker compose logs --tail=200 migrate api worker
+              exit 1
+            fi
+
+            for attempt in $(seq 1 30); do
+              if curl --fail --silent --show-error http://127.0.0.1:18080/health/live; then
+                exit 0
+              fi
+              sleep 2
+            done
+
+            docker compose ps -a
+            docker compose logs --tail=200 api worker migrate
+            exit 1
           REMOTE

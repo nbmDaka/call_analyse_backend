@@ -61,6 +61,16 @@ type Config struct {
 	BootstrapAdminPassword string
 }
 
+// LoadDatabase loads only the configuration required by the migration command.
+// Migrations must not depend on JWT, AI, storage, or email settings.
+func LoadDatabase() (Config, error) {
+	databaseURL := strings.TrimSpace(os.Getenv("DATABASE_URL"))
+	if databaseURL == "" {
+		return Config{}, fmt.Errorf("DATABASE_URL is required")
+	}
+	return Config{DatabaseURL: databaseURL}, nil
+}
+
 // Load parses and validates process configuration. AIMode contains the resolved
 // provider mode: auto selects Gemini when a key is configured and fake only in
 // development or test when no key is configured.
