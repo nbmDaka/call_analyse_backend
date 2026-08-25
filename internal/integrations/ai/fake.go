@@ -12,7 +12,7 @@ import (
 // FakeAnalysisProvider provides deterministic analysis for development and tests.
 type FakeAnalysisProvider struct{}
 
-// Analyze returns fixed, complete structured analysis with every scoring criterion.
+// Analyze returns fixed, complete structured lysis with every scoring criterion.
 func (FakeAnalysisProvider) Analyze(_ context.Context, _ transcription.Transcript) (analysis.Analysis, error) {
 	criteria := make(map[string]analysis.CriterionResult, len(scoring.Criteria()))
 	for _, criterion := range scoring.Criteria() {
