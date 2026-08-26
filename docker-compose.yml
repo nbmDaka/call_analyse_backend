@@ -67,6 +67,8 @@ services:
 
   postgres:
     image: postgres:16-alpine
+    ports:
+      - "${POSTGRES_HOST_PORT:-5430}:5432"
     environment:
       POSTGRES_DB: call_analyse
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
