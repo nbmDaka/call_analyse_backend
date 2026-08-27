@@ -47,7 +47,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	transcriber, analyzer, err := workerProviders(cfg)
+	transcriber, analyzer, err := workerProviders(cfg, logger)
 	if err != nil {
 		logger.Error("worker provider startup failed", "error", err)
 		os.Exit(1)
@@ -61,6 +61,7 @@ func main() {
 		Analyzer:        analyzer,
 		Objects:         objects,
 		ProviderTimeout: cfg.ProviderTimeout,
+		Logger:          logger,
 	}
 	mux := asynq.NewServeMux()
 	mux.Handle(queue.TypeProcessCall, worker.NewHandler(processor))
@@ -79,7 +80,7 @@ func main() {
 	server.Shutdown()
 }
 
-func workerProviders(cfg config.Config) (transcription.TranscriptionProvider, analysis.AnalysisProvider, error) {
+func workerProviders(cfg config.Config, logger *slog.Logger) (transcription.TranscriptionProvider, analysis.AnalysisProvider, error) {
 	switch cfg.AIMode {
 	case config.AIModeFake:
 		return transcription.FakeProvider{}, providers.FakeAnalysisProvider{}, nil
@@ -89,6 +90,7 @@ func workerProviders(cfg config.Config) (transcription.TranscriptionProvider, an
 			TranscriptionModel: cfg.GeminiTranscriptionModel,
 			AnalysisModel:      cfg.GeminiAnalysisModel,
 			Timeout:            cfg.ProviderTimeout,
+			Logger:             logger,
 		})
 		if err != nil {
 			return nil, nil, err

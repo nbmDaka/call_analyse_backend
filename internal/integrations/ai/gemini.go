@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -27,6 +28,7 @@ type GeminiConfig struct {
 	AnalysisModel      string
 	BaseURL            string
 	Timeout            time.Duration
+	Logger             *slog.Logger
 }
 
 // Gemini implements the transcription and analysis provider boundaries over Gemini HTTP.
@@ -36,6 +38,14 @@ type Gemini struct {
 	analysisModel      string
 	baseURL            string
 	httpClient         *http.Client
+	logger             *slog.Logger
+}
+
+func (g *Gemini) log() *slog.Logger {
+	if g.logger != nil {
+		return g.logger
+	}
+	return slog.Default()
 }
 
 // NewGemini constructs an adapter with an explicit HTTP timeout.
@@ -62,11 +72,13 @@ func NewGemini(cfg GeminiConfig) (*Gemini, error) {
 		analysisModel:      cfg.AnalysisModel,
 		baseURL:            baseURL,
 		httpClient:         &http.Client{Timeout: cfg.Timeout},
+		logger:             cfg.Logger,
 	}, nil
 }
 
 // Transcribe submits inline audio to Gemini and extracts the generated transcript text.
 func (g *Gemini) Transcribe(ctx context.Context, input transcription.AudioInput) (transcription.TranscriptResult, error) {
+	g.log().Info("sending transcription request to Gemini", "model", g.transcriptionModel, "audio_bytes", len(input.Data), "mime_type", input.MIMEType)
 	request := geminiGenerateContentRequest{Contents: []geminiContent{{
 		Role: "user",
 		Parts: []geminiPart{
@@ -76,17 +88,21 @@ func (g *Gemini) Transcribe(ctx context.Context, input transcription.AudioInput)
 	}}}
 	text, err := g.generate(ctx, g.transcriptionModel, request)
 	if err != nil {
+		g.log().Error("Gemini transcription failed", "model", g.transcriptionModel, "error", err)
 		return transcription.TranscriptResult{}, err
 	}
 	if strings.TrimSpace(text) == "" {
+		g.log().Error("Gemini returned empty transcript text", "model", g.transcriptionModel)
 		return transcription.TranscriptResult{}, ErrGeminiRequest
 	}
+	g.log().Info("Gemini transcription completed", "model", g.transcriptionModel, "transcript_chars", len(text))
 	return transcription.TranscriptResult{Text: text}, nil
 }
 
 // Analyze requests structured JSON and decodes the model's returned analysis.
 // Strict business validation is deliberately owned by the analysis package.
 func (g *Gemini) Analyze(ctx context.Context, transcript transcription.Transcript) (analysis.Analysis, error) {
+	g.log().Info("sending analysis request to Gemini", "model", g.analysisModel, "transcript_chars", len(transcript.Text))
 	prompt := `Analyze the following sales-call transcript.
 Evaluate according to standard sales criteria: greeting (max 5), rapport (max 10), needs_discovery (max 20), presentation (max 15), objection_handling (max 20), next_action (max 15), communication (max 10), closing (max 5).
 Also extract speech dynamics (talk-to-listen percentage, awkward pauses >3.5s, interruptions, emotional tone), speaker role mapping (who is manager and who is client), specific violations with severity and actionable coaching tips.
@@ -113,12 +129,15 @@ Transcript:
 	}
 	text, err := g.generate(ctx, g.analysisModel, request)
 	if err != nil {
+		g.log().Error("Gemini analysis failed", "model", g.analysisModel, "error", err)
 		return analysis.Analysis{}, err
 	}
 	result, err := analysis.ParseAndValidate([]byte(text))
 	if err != nil {
+		g.log().Error("Gemini analysis parsing/validation failed", "model", g.analysisModel, "error", err, "raw_response", text)
 		return analysis.Analysis{}, ErrGeminiRequest
 	}
+	g.log().Info("Gemini analysis successfully decoded and validated", "model", g.analysisModel)
 	return result, nil
 }
 
@@ -126,10 +145,12 @@ Transcript:
 func (g *Gemini) generate(ctx context.Context, model string, request geminiGenerateContentRequest) (string, error) {
 	body, err := json.Marshal(request)
 	if err != nil {
+		g.log().Error("failed to marshal Gemini request payload", "error", err)
 		return "", ErrGeminiRequest
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.endpoint(model), bytes.NewReader(body))
 	if err != nil {
+		g.log().Error("failed to create HTTP request for Gemini", "error", err)
 		return "", ErrGeminiRequest
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -137,22 +158,27 @@ func (g *Gemini) generate(ctx context.Context, model string, request geminiGener
 
 	response, err := g.httpClient.Do(req)
 	if err != nil {
+		g.log().Error("Gemini HTTP call failed", "model", model, "error", err)
 		return "", ErrGeminiRequest
 	}
 	defer response.Body.Close()
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return "", fmt.Errorf("%w: status %d", ErrGeminiRequest, response.StatusCode)
-	}
 	responseBody, err := io.ReadAll(response.Body)
 	if err != nil {
+		g.log().Error("failed to read Gemini response body", "model", model, "error", err)
 		return "", ErrGeminiRequest
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		g.log().Error("Gemini returned non-2xx status code", "model", model, "status", response.StatusCode, "body", string(responseBody))
+		return "", fmt.Errorf("%w: status %d", ErrGeminiRequest, response.StatusCode)
 	}
 	var decoded geminiGenerateContentResponse
 	if err := json.Unmarshal(responseBody, &decoded); err != nil {
+		g.log().Error("failed to unmarshal Gemini JSON response", "model", model, "error", err, "body", string(responseBody))
 		return "", ErrGeminiRequest
 	}
 	text := decoded.text()
 	if text == "" {
+		g.log().Error("Gemini response contained no candidate parts", "model", model, "body", string(responseBody))
 		return "", ErrGeminiRequest
 	}
 	return text, nil
