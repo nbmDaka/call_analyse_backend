@@ -64,8 +64,9 @@ type Upload struct {
 
 // Page requests a one-indexed page of calls.
 type Page struct {
-	Number int
-	Size   int
+	Number    int
+	Size      int
+	ManagerID *uuid.UUID
 }
 
 // CallPage is a scoped page of calls with total metadata computed before pagination.

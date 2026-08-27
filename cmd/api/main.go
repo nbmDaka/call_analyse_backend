@@ -16,9 +16,10 @@ import (
 	"call_analyse_backend/internal/modules/calls"
 	"call_analyse_backend/internal/modules/dashboard"
 	"call_analyse_backend/internal/modules/golden_standards"
+	"call_analyse_backend/internal/modules/invitations"
 	"call_analyse_backend/internal/modules/memberships"
-	"call_analyse_backend/internal/modules/playbooks"
 	platformadmin "call_analyse_backend/internal/modules/platform"
+	"call_analyse_backend/internal/modules/playbooks"
 	"call_analyse_backend/internal/modules/workspaces"
 	"call_analyse_backend/internal/platform/database"
 	"call_analyse_backend/internal/platform/queue"
@@ -94,6 +95,7 @@ func main() {
 	workspaceStore := workspaces.NewPostgresStore(pool)
 	workspaceService := workspaces.NewService(workspaceStore)
 	membershipService := memberships.NewService(memberships.NewPostgresStore(pool))
+	invitationService := invitations.NewService(invitations.NewPostgresStore(pool), mailer, auth.NewPasswordHasher(), tokens, cfg.FrontendURL, 7*24*time.Hour)
 	platformService := platformadmin.NewService(platformadmin.NewPostgresStore(pool))
 	playbookService := playbooks.NewService(playbooks.NewPostgresStore(pool))
 	goldenStandardsService := golden_standards.NewService(golden_standards.NewPostgresStore(pool))
@@ -109,7 +111,7 @@ func main() {
 	handler := httpapi.NewRouter(httpapi.Dependencies{
 		Authentication: authService, CORSAllowedOrigins: cfg.CORSAllowedOrigins,
 		Calls: callService, Dashboard: dashboardService, Workspaces: workspaceService,
-		WorkspaceActors: workspaceStore, Memberships: membershipService, Platform: platformService,
+		WorkspaceActors: workspaceStore, Memberships: membershipService, Invitations: invitationService, Platform: platformService,
 		Playbooks: playbookService, GoldenStandards: goldenStandardsService,
 		Tokens: tokens, EnqueueCall: enqueue, EnqueueWorkspaceCall: enqueueWorkspace,
 		Ready: ready, MaxUploadBytes: cfg.MaxUploadBytes, RequestTimeout: cfg.ProviderTimeout, Logger: logger,

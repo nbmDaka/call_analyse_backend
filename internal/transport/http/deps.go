@@ -10,6 +10,7 @@ import (
 	"call_analyse_backend/internal/modules/calls"
 	"call_analyse_backend/internal/modules/dashboard"
 	"call_analyse_backend/internal/modules/golden_standards"
+	"call_analyse_backend/internal/modules/invitations"
 	"call_analyse_backend/internal/modules/memberships"
 	platformadmin "call_analyse_backend/internal/modules/platform"
 	"call_analyse_backend/internal/modules/playbooks"
@@ -80,6 +81,15 @@ type goldenStandardsService interface {
 	Delete(context.Context, uuid.UUID, uuid.UUID) error
 }
 
+type invitationsService interface {
+	Invite(context.Context, workspaces.Actor, invitations.CreateInput) (invitations.Invitation, error)
+	ListPending(context.Context, workspaces.Actor) ([]invitations.Invitation, error)
+	Revoke(context.Context, workspaces.Actor, uuid.UUID) error
+	GetInfo(context.Context, string) (invitations.InvitationInfo, error)
+	Accept(context.Context, uuid.UUID, string) (uuid.UUID, error)
+	RegisterAndAccept(context.Context, string, string) (auth.TokenPair, auth.PublicUser, uuid.UUID, error)
+}
+
 // Dependencies are the application boundaries required by the HTTP layer.
 type Dependencies struct {
 	Authentication       authService
@@ -89,6 +99,7 @@ type Dependencies struct {
 	Workspaces           workspaceService
 	WorkspaceActors      workspaces.ActorResolver
 	Memberships          membershipService
+	Invitations          invitationsService
 	Platform             platformService
 	Playbooks            playbookService
 	GoldenStandards      goldenStandardsService

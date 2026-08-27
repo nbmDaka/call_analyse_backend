@@ -40,9 +40,12 @@ func NewRouter(deps Dependencies) http.Handler {
 		api.Post("/auth/reset-password", s.resetPassword)
 		api.Post("/auth/refresh", s.refresh)
 		api.Post("/auth/logout", s.logout)
+		api.Get("/invitations/{token}", s.getInvitation)
+		api.Post("/invitations/{token}/register", s.registerByInvitation)
 		api.Group(func(protected chi.Router) {
 			protected.Use(s.authenticate)
 			protected.Get("/me", s.me)
+			protected.Post("/invitations/{token}/accept", s.acceptInvitation)
 			protected.Get("/workspaces", s.listWorkspaces)
 			protected.Post("/workspaces", s.createWorkspace)
 			protected.Route("/workspaces/{workspaceID}", func(workspace chi.Router) {
@@ -53,6 +56,9 @@ func NewRouter(deps Dependencies) http.Handler {
 				workspace.Post("/members", s.createMember)
 				workspace.Patch("/members/{membershipID}", s.updateMember)
 				workspace.Delete("/members/{membershipID}", s.deleteMember)
+				workspace.Get("/invitations", s.listInvitations)
+				workspace.Post("/invitations", s.createInvitation)
+				workspace.Delete("/invitations/{invitationID}", s.revokeInvitation)
 				workspace.Get("/calls", s.listCalls)
 
 				workspace.Post("/calls", s.createCall)

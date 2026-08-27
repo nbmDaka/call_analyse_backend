@@ -8,6 +8,7 @@ import (
 	"call_analyse_backend/internal/modules/auth"
 	"call_analyse_backend/internal/modules/calls"
 	"call_analyse_backend/internal/modules/golden_standards"
+	"call_analyse_backend/internal/modules/invitations"
 	platformadmin "call_analyse_backend/internal/modules/platform"
 	"call_analyse_backend/internal/modules/playbooks"
 	"call_analyse_backend/internal/modules/workspaces"
@@ -42,6 +43,18 @@ func mapError(err error) apiError {
 		return apiError{http.StatusForbidden, "USER_SUSPENDED", "user is suspended"}
 	case errors.Is(err, auth.ErrInvalidActionToken):
 		return apiError{http.StatusBadRequest, "INVALID_TOKEN", "link is invalid or expired"}
+	case errors.Is(err, invitations.ErrInvitationNotFound):
+		return apiError{http.StatusNotFound, "INVITATION_NOT_FOUND", "invitation not found"}
+	case errors.Is(err, invitations.ErrInvitationExpired):
+		return apiError{http.StatusBadRequest, "INVITATION_EXPIRED", "invitation has expired"}
+	case errors.Is(err, invitations.ErrInvitationAccepted):
+		return apiError{http.StatusBadRequest, "INVITATION_ACCEPTED", "invitation has already been accepted"}
+	case errors.Is(err, invitations.ErrAlreadyMember):
+		return apiError{http.StatusConflict, "ALREADY_MEMBER", "user is already a member of this workspace"}
+	case errors.Is(err, invitations.ErrInvalidEmail):
+		return apiError{http.StatusBadRequest, "INVALID_EMAIL", "invalid email address"}
+	case errors.Is(err, invitations.ErrInvalidRole):
+		return apiError{http.StatusBadRequest, "INVALID_ROLE", "invalid workspace role"}
 	case errors.Is(err, auth.ErrEmailServiceUnavailable):
 		return apiError{http.StatusServiceUnavailable, "EMAIL_SERVICE_UNAVAILABLE", "email service is unavailable"}
 	case errors.Is(err, calls.ErrCallNotFound):

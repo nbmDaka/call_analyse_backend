@@ -32,6 +32,7 @@ type Call struct {
 	OwnerUserID      uuid.UUID `json:"owner_user_id"`
 	UploadedByUserID uuid.UUID `json:"uploaded_by_user_id"`
 	ManagerID        uuid.UUID `json:"manager_id"` // Deprecated compatibility field.
+	ManagerEmail     string    `json:"manager_email,omitempty"`
 	Status           Status    `json:"status"`
 	OriginalFilename string    `json:"original_filename"`
 	ObjectKey        string    `json:"object_key,omitempty"`
