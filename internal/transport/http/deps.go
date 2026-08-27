@@ -47,6 +47,7 @@ type workspaceService interface {
 	Get(context.Context, uuid.UUID, uuid.UUID) (workspaces.AvailableWorkspace, error)
 	CreateCompany(context.Context, uuid.UUID, string) (workspaces.AvailableWorkspace, error)
 	Rename(context.Context, workspaces.Actor, string) (workspaces.Workspace, error)
+	Delete(context.Context, workspaces.Actor) error
 }
 
 type membershipService interface {

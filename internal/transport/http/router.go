@@ -52,6 +52,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				workspace.Use(s.resolveWorkspaceActor)
 				workspace.Get("/", s.getWorkspace)
 				workspace.Patch("/", s.renameWorkspace)
+				workspace.Delete("/", s.deleteWorkspace)
 				workspace.Get("/members", s.listMembers)
 				workspace.Post("/members", s.createMember)
 				workspace.Patch("/members/{membershipID}", s.updateMember)

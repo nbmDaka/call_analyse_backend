@@ -19,6 +19,21 @@ var allowedAudioTypes = map[string]map[string]struct{}{
 		"audio/mp4":   {},
 		"audio/x-m4a": {},
 	},
+	".ogg": {
+		"audio/ogg":       {},
+		"application/ogg": {},
+		"audio/opus":      {},
+		"audio/x-ogg":     {},
+		"audio/vorbis":    {},
+	},
+	".oga": {
+		"audio/ogg":       {},
+		"application/ogg": {},
+	},
+	".opus": {
+		"audio/ogg":  {},
+		"audio/opus": {},
+	},
 }
 
 // ValidateUpload verifies that untrusted upload metadata describes a supported,

@@ -88,6 +88,19 @@ func (s server) renameWorkspace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"workspace": item})
 }
 
+func (s server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
+	actor, ok := middleware.WorkspaceActorFromContext(r.Context())
+	if !ok {
+		writeError(w, r, workspaces.ErrForbidden)
+		return
+	}
+	if err := s.deps.Workspaces.Delete(r.Context(), actor); err != nil {
+		writeError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s server) listMembers(w http.ResponseWriter, r *http.Request) {
 	actor, ok := middleware.WorkspaceActorFromContext(r.Context())
 	if !ok {
