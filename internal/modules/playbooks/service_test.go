@@ -19,7 +19,7 @@ func newMemoryStore() *memoryStore {
 func (m *memoryStore) List(_ context.Context, workspaceID uuid.UUID) ([]Playbook, error) {
 	var list []Playbook
 	for _, p := range m.items {
-		if p.WorkspaceID == workspaceID {
+		if p.WorkspaceID == workspaceID && p.DeletedAt == nil {
 			list = append(list, p)
 		}
 	}
@@ -28,7 +28,7 @@ func (m *memoryStore) List(_ context.Context, workspaceID uuid.UUID) ([]Playbook
 
 func (m *memoryStore) GetByID(_ context.Context, workspaceID, id uuid.UUID) (Playbook, error) {
 	p, ok := m.items[id]
-	if !ok || p.WorkspaceID != workspaceID {
+	if !ok || p.WorkspaceID != workspaceID || p.DeletedAt != nil {
 		return Playbook{}, ErrPlaybookNotFound
 	}
 	return p, nil
@@ -36,12 +36,12 @@ func (m *memoryStore) GetByID(_ context.Context, workspaceID, id uuid.UUID) (Pla
 
 func (m *memoryStore) GetDefault(_ context.Context, workspaceID uuid.UUID) (Playbook, error) {
 	for _, p := range m.items {
-		if p.WorkspaceID == workspaceID && p.IsDefault {
+		if p.WorkspaceID == workspaceID && p.IsDefault && p.DeletedAt == nil {
 			return p, nil
 		}
 	}
 	for _, p := range m.items {
-		if p.WorkspaceID == workspaceID {
+		if p.WorkspaceID == workspaceID && p.DeletedAt == nil {
 			return p, nil
 		}
 	}
@@ -54,7 +54,7 @@ func (m *memoryStore) Create(_ context.Context, p Playbook) (Playbook, error) {
 	p.UpdatedAt = time.Now()
 	if p.IsDefault {
 		for k, item := range m.items {
-			if item.WorkspaceID == p.WorkspaceID {
+			if item.WorkspaceID == p.WorkspaceID && item.DeletedAt == nil {
 				item.IsDefault = false
 				m.items[k] = item
 			}
@@ -68,7 +68,7 @@ func (m *memoryStore) Update(_ context.Context, p Playbook) (Playbook, error) {
 	p.UpdatedAt = time.Now()
 	if p.IsDefault {
 		for k, item := range m.items {
-			if item.WorkspaceID == p.WorkspaceID && item.ID != p.ID {
+			if item.WorkspaceID == p.WorkspaceID && item.ID != p.ID && item.DeletedAt == nil {
 				item.IsDefault = false
 				m.items[k] = item
 			}
@@ -80,10 +80,14 @@ func (m *memoryStore) Update(_ context.Context, p Playbook) (Playbook, error) {
 
 func (m *memoryStore) Delete(_ context.Context, workspaceID, id uuid.UUID) error {
 	p, ok := m.items[id]
-	if !ok || p.WorkspaceID != workspaceID {
+	if !ok || p.WorkspaceID != workspaceID || p.DeletedAt != nil {
 		return ErrPlaybookNotFound
 	}
-	delete(m.items, id)
+	now := time.Now()
+	p.DeletedAt = &now
+	p.IsDefault = false
+	p.UpdatedAt = now
+	m.items[id] = p
 	return nil
 }
 
