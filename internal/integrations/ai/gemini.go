@@ -82,7 +82,7 @@ func (g *Gemini) Transcribe(ctx context.Context, input transcription.AudioInput)
 	request := geminiGenerateContentRequest{Contents: []geminiContent{{
 		Role: "user",
 		Parts: []geminiPart{
-			{Text: "Transcribe this sales-call audio. Return only the transcript text. Do not invent timestamps or speaker labels when unavailable."},
+			{Text: "Выполни транскрибацию аудиозаписи этого звонка продаж. Верни только текст транскрипта без лишних комментариев. Не придумывай таймкоды или имена спикеров, если они недоступны."},
 			{InlineData: &geminiInlineData{MIMEType: input.MIMEType, Data: base64.StdEncoding.EncodeToString(input.Data)}},
 		},
 	}}}
@@ -103,25 +103,36 @@ func (g *Gemini) Transcribe(ctx context.Context, input transcription.AudioInput)
 // Strict business validation is deliberately owned by the analysis package.
 func (g *Gemini) Analyze(ctx context.Context, transcript transcription.Transcript) (analysis.Analysis, error) {
 	g.log().Info("sending analysis request to Gemini", "model", g.analysisModel, "transcript_chars", len(transcript.Text))
-	prompt := `Analyze the following sales-call transcript.
-Evaluate according to standard sales criteria: greeting (max 5), rapport (max 10), needs_discovery (max 20), presentation (max 15), objection_handling (max 20), next_action (max 15), communication (max 10), closing (max 5).
-Also extract speech dynamics (talk-to-listen percentage, awkward pauses >3.5s, interruptions, emotional tone), speaker role mapping (who is manager and who is client), specific violations with severity and actionable coaching tips.
+	prompt := `Проанализируй следующий транскрипт звонка менеджера по продажам.
+Оцени разговор по стандартным критериям продаж:
+- greeting (Приветствие, макс. 5 баллов)
+- rapport (Установление контакта, макс. 10 баллов)
+- needs_discovery (Выявление потребностей, макс. 20 баллов)
+- presentation (Презентация, макс. 15 баллов)
+- objection_handling (Работа с возражениями, макс. 20 баллов)
+- next_action (Следующий шаг, макс. 15 баллов)
+- communication (Коммуникация, макс. 10 баллов)
+- closing (Завершение сделки, макс. 5 баллов)
 
-Return JSON only with these fields:
-- summary (string)
-- needs (array of strings)
-- objections (array of strings)
-- refusal_reason (nullable string)
-- mistakes (array of strings)
-- strengths (array of strings)
-- next_action (string)
-- criterion_results (object mapping each criterion key to {score: number, feedback: string})
+Также определи динамику речи (баланс речи менеджера и клиента в процентах talk-to-listen, неловкие паузы >3.5 сек, перебивания, эмоциональный тон), распределение ролей (кто менеджер, а кто клиент), выявленные ошибки и нарушения с уровнем критичности, а также персональные практические рекомендации для менеджера.
+
+ВАЖНОЕ ТРЕБОВАНИЕ К ЯЗЫКУ: Все текстовые описания, комментарии (feedback), списки потребностей (needs), возражений (objections), сильных сторон (strengths), ошибок (mistakes), следующего шага (next_action), названий нарушений (title), советов (fix_advice), персональных рекомендаций (actionable_coaching) и эмоциональных характеристик (emotional_tone) ДОЛЖНЫ БЫТЬ СТРОГО НА РУССКОМ ЯЗЫКЕ.
+
+Верни ответ ТОЛЬКО в формате JSON со следующими полями:
+- summary (string, резюме звонка на русском языке)
+- needs (array of strings, выявленные потребности клиента на русском языке)
+- objections (array of strings, возражения клиента на русском языке)
+- refusal_reason (nullable string, причина отказа клиента, если была, иначе null)
+- mistakes (array of strings, ошибки менеджера на русском языке)
+- strengths (array of strings, сильные стороны менеджера на русском языке)
+- next_action (string, рекомендуемое следующее действие на русском языке)
+- criterion_results (объект, содержащий ключи "greeting", "rapport", "needs_discovery", "presentation", "objection_handling", "next_action", "communication", "closing", где для каждого ключа указан объект {score: number, feedback: string с подробным обоснованием оценки на русском языке})
 - role_mapping ({manager_speaker: string, client_speaker: string})
-- speech_analytics ({talk_to_listen: {manager_percentage: number, client_percentage: number}, awkward_pauses: [{start_seconds: number, end_seconds: number, duration_seconds: number}], interruptions: [{timestamp_seconds: number, interrupted_by: string, context: string}], emotional_tone: {manager_tone: string, client_tone: string, sentiment_shift: string}})
-- violations (array of {severity: "low"|"medium"|"high", title: string, quote: string, timestamp_seconds: number, fix_advice: string})
-- actionable_coaching (array of actionable tactical tips for the manager)
+- speech_analytics ({talk_to_listen: {manager_percentage: number, client_percentage: number}, awkward_pauses: [{start_seconds: number, end_seconds: number, duration_seconds: number}], interruptions: [{timestamp_seconds: number, interrupted_by: string, context: string на русском языке}], emotional_tone: {manager_tone: string на русском языке, client_tone: string на русском языке, sentiment_shift: string на русском языке}})
+- violations (массив объектов {severity: "low"|"medium"|"high", title: string (название ошибки на русском языке), quote: string (цитата из транскрипта), timestamp_seconds: number, fix_advice: string (как исправить ошибку на русском языке)})
+- actionable_coaching (массив строк с практическими тактическими рекомендациями для менеджера на русском языке)
 
-Transcript:
+Транскрипт звонка:
 ` + transcript.Text
 	request := geminiGenerateContentRequest{
 		Contents:         []geminiContent{{Role: "user", Parts: []geminiPart{{Text: prompt}}}},
