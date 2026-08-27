@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"call_analyse_backend/internal/modules/analysis"
+	"call_analyse_backend/internal/modules/scoring"
 	"call_analyse_backend/internal/modules/transcription"
 )
 
@@ -101,36 +102,64 @@ func (g *Gemini) Transcribe(ctx context.Context, input transcription.AudioInput)
 
 // Analyze requests structured JSON and decodes the model's returned analysis.
 // Strict business validation is deliberately owned by the analysis package.
-func (g *Gemini) Analyze(ctx context.Context, transcript transcription.Transcript) (analysis.Analysis, error) {
+func (g *Gemini) Analyze(ctx context.Context, transcript transcription.Transcript, opts ...analysis.Options) (analysis.Analysis, error) {
 	g.log().Info("sending analysis request to Gemini", "model", g.analysisModel, "transcript_chars", len(transcript.Text))
-	prompt := `Проанализируй следующий транскрипт звонка менеджера по продажам.
-Оцени разговор по стандартным критериям продаж:
-- greeting (Приветствие, макс. 5 баллов)
-- rapport (Установление контакта, макс. 10 баллов)
-- needs_discovery (Выявление потребностей, макс. 20 баллов)
-- presentation (Презентация, макс. 15 баллов)
-- objection_handling (Работа с возражениями, макс. 20 баллов)
-- next_action (Следующий шаг, макс. 15 баллов)
-- communication (Коммуникация, макс. 10 баллов)
-- closing (Завершение сделки, макс. 5 баллов)
 
+	var criteriaList []analysis.CriterionDetail
+	if len(opts) > 0 && len(opts[0].Criteria) > 0 {
+		criteriaList = opts[0].Criteria
+	} else {
+		criteriaList = []analysis.CriterionDetail{
+			{Key: "greeting", Title: "Приветствие", MaxScore: 5, Description: "Менеджер должен четко поздороваться, назвать свое имя и компанию."},
+			{Key: "rapport", Title: "Установление контакта", MaxScore: 10, Description: "Вежливый и доброжелательный тон, обращение к клиенту по имени."},
+			{Key: "needs_discovery", Title: "Выявление потребностей", MaxScore: 20, Description: "Задать минимум 2-3 открытых вопроса для понимания задачи и бюджета клиента."},
+			{Key: "presentation", Title: "Презентация", MaxScore: 15, Description: "Презентовать продукт через выгоды для клиента, а не просто перечислять функции."},
+			{Key: "objection_handling", Title: "Работа с возражениями", MaxScore: 20, Description: "Выслушать сомнения клиента, согласиться с важностью вопроса и аргументированно отработать."},
+			{Key: "next_action", Title: "Следующий шаг", MaxScore: 15, Description: "Назначить конкретную дату, время и цель следующего контакта."},
+			{Key: "communication", Title: "Коммуникация", MaxScore: 10, Description: "Отсутствие слов-паразитов, перебиваний и пассивной агрессии."},
+			{Key: "closing", Title: "Завершение сделки", MaxScore: 5, Description: "Позитивное прощание и подтверждение договоренностей."},
+		}
+	}
+
+	var criteriaLines strings.Builder
+	var scoringCriteria []scoring.Criterion
+	var criterionKeys []string
+	for _, c := range criteriaList {
+		scoringCriteria = append(scoringCriteria, scoring.Criterion{Key: c.Key, Max: c.MaxScore})
+		criterionKeys = append(criterionKeys, fmt.Sprintf("%q", c.Key))
+		desc := c.Description
+		if strings.TrimSpace(desc) == "" {
+			desc = c.Title
+		}
+		criteriaLines.WriteString(fmt.Sprintf("- %s (%s, макс. %d баллов): %s\n", c.Key, c.Title, c.MaxScore, desc))
+	}
+
+	prompt := `Проанализируй следующий транскрипт звонка менеджера по продажам.
+Оцени разговор по критериям чек-листа:
+` + criteriaLines.String() + `
 Также определи динамику речи (баланс речи менеджера и клиента в процентах talk-to-listen, неловкие паузы >3.5 сек, перебивания, эмоциональный тон), распределение ролей (кто менеджер, а кто клиент), выявленные ошибки и нарушения с уровнем критичности, а также персональные практические рекомендации для менеджера.
 
-ВАЖНОЕ ТРЕБОВАНИЕ К ЯЗЫКУ: Все текстовые описания, комментарии (feedback), списки потребностей (needs), возражений (objections), сильных сторон (strengths), ошибок (mistakes), следующего шага (next_action), названий нарушений (title), советов (fix_advice), персональных рекомендаций (actionable_coaching) и эмоциональных характеристик (emotional_tone) ДОЛЖНЫ БЫТЬ СТРОГО НА РУССКОМ ЯЗЫКЕ.
+ЯЗЫКОВЫЕ ПРАВИЛА (LANGUAGE INSTRUCTIONS):
+1. Определи язык звонка: "ru" (русский), "kk" (казахский) или "mixed" (смешанный / код-свитчинг). Запиши его в поле "detected_language".
+2. Язык всего анализа (summary, feedback по критериям, needs, objections, mistakes, strengths, next_action, violations.title, violations.fix_advice, actionable_coaching, emotional_tone) ДОЛЖЕН СТРОГО СООТВЕТСТВОВАТЬ языку звонка:
+   - Если звонок на казахском языке -> ВСЕ текстовые поля пиши на казахском языке (қазақ тілінде).
+   - Если звонок на русском языке -> ВСЕ текстовые поля пиши на русском языке.
+   - Если звонок смешанный (mixed) -> пиши на русском языке (или на основном языке клиента).
 
 Верни ответ ТОЛЬКО в формате JSON со следующими полями:
-- summary (string, резюме звонка на русском языке)
-- needs (array of strings, выявленные потребности клиента на русском языке)
-- objections (array of strings, возражения клиента на русском языке)
+- summary (string, резюме звонка на языке разговора)
+- detected_language (string, "ru" | "kk" | "mixed")
+- needs (array of strings, выявленные потребности клиента)
+- objections (array of strings, возражения клиента)
 - refusal_reason (nullable string, причина отказа клиента, если была, иначе null)
-- mistakes (array of strings, ошибки менеджера на русском языке)
-- strengths (array of strings, сильные стороны менеджера на русском языке)
-- next_action (string, рекомендуемое следующее действие на русском языке)
-- criterion_results (объект, содержащий ключи "greeting", "rapport", "needs_discovery", "presentation", "objection_handling", "next_action", "communication", "closing", где для каждого ключа указан объект {score: number, feedback: string с подробным обоснованием оценки на русском языке})
+- mistakes (array of strings, ошибки менеджера)
+- strengths (array of strings, сильные стороны менеджера)
+- next_action (string, рекомендуемое следующее действие)
+- criterion_results (объект, содержащий ключи ` + strings.Join(criterionKeys, ", ") + `, где для каждого ключа указан объект {score: number, feedback: string с подробным обоснованием оценки})
 - role_mapping ({manager_speaker: string, client_speaker: string})
-- speech_analytics ({talk_to_listen: {manager_percentage: number, client_percentage: number}, awkward_pauses: [{start_seconds: number, end_seconds: number, duration_seconds: number}], interruptions: [{timestamp_seconds: number, interrupted_by: string, context: string на русском языке}], emotional_tone: {manager_tone: string на русском языке, client_tone: string на русском языке, sentiment_shift: string на русском языке}})
-- violations (массив объектов {severity: "low"|"medium"|"high", title: string (название ошибки на русском языке), quote: string (цитата из транскрипта), timestamp_seconds: number, fix_advice: string (как исправить ошибку на русском языке)})
-- actionable_coaching (массив строк с практическими тактическими рекомендациями для менеджера на русском языке)
+- speech_analytics ({talk_to_listen: {manager_percentage: number, client_percentage: number}, awkward_pauses: [{start_seconds: number, end_seconds: number, duration_seconds: number}], interruptions: [{timestamp_seconds: number, interrupted_by: string, context: string}], emotional_tone: {manager_tone: string, client_tone: string, sentiment_shift: string}})
+- violations (массив объектов {severity: "low"|"medium"|"high", title: string (название ошибки), quote: string (цитата из транскрипта), timestamp_seconds: number, fix_advice: string (как исправить ошибку)})
+- actionable_coaching (массив строк с практическими тактическими рекомендациями для менеджера)
 
 Транскрипт звонка:
 ` + transcript.Text
@@ -143,12 +172,12 @@ func (g *Gemini) Analyze(ctx context.Context, transcript transcription.Transcrip
 		g.log().Error("Gemini analysis failed", "model", g.analysisModel, "error", err)
 		return analysis.Analysis{}, err
 	}
-	result, err := analysis.ParseAndValidate([]byte(text))
+	result, err := analysis.ParseAndValidateWithCriteria([]byte(text), scoringCriteria)
 	if err != nil {
 		g.log().Error("Gemini analysis parsing/validation failed", "model", g.analysisModel, "error", err, "raw_response", text)
 		return analysis.Analysis{}, ErrGeminiRequest
 	}
-	g.log().Info("Gemini analysis successfully decoded and validated", "model", g.analysisModel)
+	g.log().Info("Gemini analysis successfully decoded and validated", "model", g.analysisModel, "detected_language", result.DetectedLanguage)
 	return result, nil
 }
 

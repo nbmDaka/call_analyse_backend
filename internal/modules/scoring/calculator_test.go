@@ -56,6 +56,33 @@ func TestCalculateRejectsUnrecognizedExtraCriterionInsteadOfExceeding100(t *test
 	}
 }
 
+func TestCalculateWithDynamicCriteria(t *testing.T) {
+	customCriteria := []Criterion{
+		{Key: "custom_intro", Max: 20},
+		{Key: "custom_pitch", Max: 50},
+		{Key: "custom_close", Max: 30},
+	}
+	scores := map[string]CriterionScore{
+		"custom_intro": {Score: 15, Feedback: "Great intro"},
+		"custom_pitch": {Score: 40, Feedback: "Clear pitch"},
+		"custom_close": {Score: 25, Feedback: "Strong closing"},
+	}
+
+	result, err := CalculateWithCriteria(scores, customCriteria)
+	if err != nil {
+		t.Fatalf("CalculateWithCriteria() error = %v", err)
+	}
+	if result.Total != 80 {
+		t.Errorf("Total = %d, want 80", result.Total)
+	}
+
+	// Missing criterion
+	delete(scores, "custom_close")
+	if _, err := CalculateWithCriteria(scores, customCriteria); err == nil {
+		t.Error("CalculateWithCriteria() error = nil, want missing criterion rejection")
+	}
+}
+
 func completeScores() map[string]CriterionScore {
 	return map[string]CriterionScore{
 		"greeting":           {Score: 4, Feedback: "Professional greeting."},

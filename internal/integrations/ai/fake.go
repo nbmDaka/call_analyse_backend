@@ -12,15 +12,22 @@ import (
 // FakeAnalysisProvider provides deterministic analysis for development and tests.
 type FakeAnalysisProvider struct{}
 
-// Analyze returns fixed, complete structured lysis with every scoring criterion.
-func (FakeAnalysisProvider) Analyze(_ context.Context, _ transcription.Transcript) (analysis.Analysis, error) {
-	criteria := make(map[string]analysis.CriterionResult, len(scoring.Criteria()))
-	for _, criterion := range scoring.Criteria() {
-		criteria[criterion.Key] = analysis.CriterionResult{Score: criterion.Max / 2, Feedback: "Deterministic fake feedback."}
+// Analyze returns fixed, complete structured analysis with configured or default scoring criteria.
+func (FakeAnalysisProvider) Analyze(_ context.Context, _ transcription.Transcript, opts ...analysis.Options) (analysis.Analysis, error) {
+	criteria := make(map[string]analysis.CriterionResult)
+	if len(opts) > 0 && len(opts[0].Criteria) > 0 {
+		for _, c := range opts[0].Criteria {
+			criteria[c.Key] = analysis.CriterionResult{Score: c.MaxScore / 2, Feedback: "Deterministic fake feedback."}
+		}
+	} else {
+		for _, criterion := range scoring.Criteria() {
+			criteria[criterion.Key] = analysis.CriterionResult{Score: criterion.Max / 2, Feedback: "Deterministic fake feedback."}
+		}
 	}
 	ts := 45.5
 	return analysis.Analysis{
 		Summary:          "Клиент запросил индивидуальное коммерческое предложение с учетом бюджета.",
+		DetectedLanguage: "ru",
 		Needs:            []string{"Коммерческое предложение в рамках бюджета", "Сроки внедрения до 1 месяца"},
 		Objections:       []string{"Чувствительность к цене"},
 		RefusalReason:    nil,

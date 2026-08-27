@@ -63,6 +63,7 @@ type Violation struct {
 // Analysis is the validated structured analysis produced from a call transcript or audio.
 type Analysis struct {
 	Summary            string                     `json:"summary"`
+	DetectedLanguage   string                     `json:"detected_language,omitempty"`
 	Needs              []string                   `json:"needs"`
 	Objections         []string                   `json:"objections"`
 	RefusalReason      *string                    `json:"refusal_reason"`

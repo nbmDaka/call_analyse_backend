@@ -30,11 +30,11 @@ func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
 // Create inserts metadata only after the caller has stored the object.
 func (s *PostgresStore) Create(ctx context.Context, call Call) (Call, error) {
 	return scanCall(s.pool.QueryRow(ctx, `
-INSERT INTO calls (id, workspace_id, owner_user_id, uploaded_by_user_id, manager_id, status, original_filename, object_key, content_type, size_bytes)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+INSERT INTO calls (id, workspace_id, owner_user_id, uploaded_by_user_id, manager_id, status, original_filename, object_key, content_type, size_bytes, playbook_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING id, workspace_id, owner_user_id, uploaded_by_user_id, manager_id, status, original_filename, object_key, content_type, size_bytes,
-          duration_seconds, error_message, created_at, updated_at`,
-		call.ID, call.WorkspaceID, call.OwnerUserID, call.UploadedByUserID, call.ManagerID, call.Status, call.OriginalFilename, call.ObjectKey, call.ContentType, call.SizeBytes))
+          duration_seconds, playbook_id, error_message, created_at, updated_at`,
+		call.ID, call.WorkspaceID, call.OwnerUserID, call.UploadedByUserID, call.ManagerID, call.Status, call.OriginalFilename, call.ObjectKey, call.ContentType, call.SizeBytes, call.PlaybookID))
 }
 
 // List applies actor scope in both total and row queries before applying pagination.
@@ -152,7 +152,7 @@ func listQuery(actor Actor, page Page) (string, []any, error) {
 	offsetPlaceholder := limitPlaceholder + 1
 	query := fmt.Sprintf(`
 SELECT c.id, c.workspace_id, c.owner_user_id, c.uploaded_by_user_id, c.manager_id, c.status, c.original_filename, c.object_key, c.content_type, c.size_bytes,
-       c.duration_seconds, c.error_message, c.created_at, c.updated_at,
+       c.duration_seconds, c.playbook_id, c.error_message, c.created_at, c.updated_at,
        COALESCE(u.email, '') AS manager_email
 FROM calls c
 LEFT JOIN users u ON u.id = c.owner_user_id
@@ -170,7 +170,7 @@ func detailQuery(actor Actor, callID uuid.UUID) (string, []any, error) {
 	}
 	query := `
 SELECT c.id, c.workspace_id, c.owner_user_id, c.uploaded_by_user_id, c.manager_id, c.status, c.original_filename, c.object_key, c.content_type, c.size_bytes,
-       c.duration_seconds, c.error_message, c.created_at, c.updated_at
+       c.duration_seconds, c.playbook_id, c.error_message, c.created_at, c.updated_at
 FROM calls c
 WHERE c.id = $1 AND ` + where
 	return query, append([]any{callID}, args...), nil
@@ -234,6 +234,7 @@ func scanCall(row callRowScanner) (Call, error) {
 		&call.ContentType,
 		&call.SizeBytes,
 		&call.DurationSeconds,
+		&call.PlaybookID,
 		&call.ErrorMessage,
 		&call.CreatedAt,
 		&call.UpdatedAt,
@@ -260,6 +261,7 @@ func scanCallWithEmail(row callRowScanner) (Call, error) {
 		&call.ContentType,
 		&call.SizeBytes,
 		&call.DurationSeconds,
+		&call.PlaybookID,
 		&call.ErrorMessage,
 		&call.CreatedAt,
 		&call.UpdatedAt,

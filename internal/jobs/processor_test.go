@@ -14,6 +14,7 @@ import (
 
 	"call_analyse_backend/internal/modules/analysis"
 	"call_analyse_backend/internal/modules/calls"
+	"call_analyse_backend/internal/modules/playbooks"
 	"call_analyse_backend/internal/modules/scoring"
 	"call_analyse_backend/internal/modules/transcription"
 	"call_analyse_backend/internal/platform/queue"
@@ -525,17 +526,121 @@ func (p *fakeTranscriber) Transcribe(ctx context.Context, input transcription.Au
 }
 
 type fakeAnalyzer struct {
-	result analysis.Analysis
-	err    error
-	calls  int
+	result       analysis.Analysis
+	err          error
+	calls        int
+	receivedOpts []analysis.Options
 }
 
-func (p *fakeAnalyzer) Analyze(ctx context.Context, transcript transcription.Transcript) (analysis.Analysis, error) {
+func (p *fakeAnalyzer) Analyze(ctx context.Context, transcript transcription.Transcript, opts ...analysis.Options) (analysis.Analysis, error) {
 	if err := ctx.Err(); err != nil {
 		return analysis.Analysis{}, err
 	}
 	p.calls++
+	p.receivedOpts = opts
 	return p.result, p.err
+}
+
+type memoryPlaybookStore struct {
+	playbooks map[uuid.UUID]playbooks.Playbook
+	defaultPB playbooks.Playbook
+}
+
+func (s *memoryPlaybookStore) List(ctx context.Context, workspaceID uuid.UUID) ([]playbooks.Playbook, error) {
+	return []playbooks.Playbook{s.defaultPB}, nil
+}
+func (s *memoryPlaybookStore) GetByID(ctx context.Context, workspaceID, id uuid.UUID) (playbooks.Playbook, error) {
+	if s.playbooks != nil {
+		if pb, ok := s.playbooks[id]; ok {
+			return pb, nil
+		}
+	}
+	if s.defaultPB.ID == id {
+		return s.defaultPB, nil
+	}
+	return playbooks.Playbook{}, playbooks.ErrPlaybookNotFound
+}
+func (s *memoryPlaybookStore) GetDefault(ctx context.Context, workspaceID uuid.UUID) (playbooks.Playbook, error) {
+	if s.defaultPB.ID != uuid.Nil {
+		return s.defaultPB, nil
+	}
+	return playbooks.Playbook{}, playbooks.ErrPlaybookNotFound
+}
+func (s *memoryPlaybookStore) Create(ctx context.Context, pb playbooks.Playbook) (playbooks.Playbook, error) {
+	return pb, nil
+}
+func (s *memoryPlaybookStore) Update(ctx context.Context, pb playbooks.Playbook) (playbooks.Playbook, error) {
+	return pb, nil
+}
+func (s *memoryPlaybookStore) Delete(ctx context.Context, workspaceID, id uuid.UUID) error {
+	return nil
+}
+
+func TestProcessorUsesCustomPlaybookAndDynamicScoring(t *testing.T) {
+	t.Parallel()
+
+	wsID := uuid.New()
+	pbID := uuid.New()
+	call := testCall(calls.StatusUploaded)
+	call.WorkspaceID = wsID
+	call.PlaybookID = &pbID
+
+	customPlaybook := playbooks.Playbook{
+		ID:          pbID,
+		WorkspaceID: wsID,
+		Name:        "Custom Sales Playbook",
+		IsDefault:   true,
+		Criteria: []playbooks.Criterion{
+			{Key: "custom_pitch", Title: "Презентация", MaxScore: 60},
+			{Key: "custom_close", Title: "Закрытие", MaxScore: 40},
+		},
+	}
+
+	analysisResult := analysis.Analysis{
+		Summary:          "Call completed in Kazakh.",
+		DetectedLanguage: "kk",
+		Needs:            []string{"Proposal"},
+		Objections:       []string{},
+		Mistakes:         []string{},
+		Strengths:        []string{"Good pitch"},
+		NextAction:       "Call next week.",
+		CriterionResults: map[string]analysis.CriterionResult{
+			"custom_pitch": {Score: 50, Feedback: "Good pitch."},
+			"custom_close": {Score: 35, Feedback: "Good closing."},
+		},
+	}
+
+	callStore := &memoryCallStore{call: call, history: []calls.Status{call.Status}}
+	transcriber := &fakeTranscriber{result: testTranscript()}
+	analyzer := &fakeAnalyzer{result: analysisResult}
+	transcriptStore := &memoryTranscriptStore{}
+	analysisStore := &memoryAnalysisStore{}
+	playbookStore := &memoryPlaybookStore{
+		playbooks: map[uuid.UUID]playbooks.Playbook{pbID: customPlaybook},
+		defaultPB: customPlaybook,
+	}
+
+	processor := Processor{
+		Calls:           callStore,
+		Transcripts:     transcriptStore,
+		Analyses:        analysisStore,
+		Playbooks:       playbookStore,
+		Transcriber:     transcriber,
+		Analyzer:        analyzer,
+		Objects:         memoryObjectStore{data: []byte("audio-bytes")},
+		ProviderTimeout: time.Second,
+	}
+
+	if err := processor.ProcessInWorkspace(context.Background(), wsID.String(), call.ID.String()); err != nil {
+		t.Fatalf("ProcessInWorkspace() error = %v", err)
+	}
+
+	if analysisStore.score.Total != 85 {
+		t.Errorf("stored backend score total = %d, want 85", analysisStore.score.Total)
+	}
+	if len(analyzer.receivedOpts) == 0 || len(analyzer.receivedOpts[0].Criteria) != 2 {
+		t.Errorf("received criteria = %+v, want 2 custom criteria", analyzer.receivedOpts)
+	}
 }
 
 type blockingTranscriber struct {

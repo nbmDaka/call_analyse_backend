@@ -23,6 +23,7 @@ var requiredFields = []string{
 
 type analysisPayload struct {
 	Summary            string                            `json:"summary"`
+	DetectedLanguage   string                            `json:"detected_language,omitempty"`
 	Needs              []string                          `json:"needs"`
 	Objections         []string                          `json:"objections"`
 	RefusalReason      *string                           `json:"refusal_reason"`
@@ -37,10 +38,13 @@ type analysisPayload struct {
 	ModelTotal         json.RawMessage                   `json:"total_score,omitempty"`
 }
 
-// ParseAndValidate strictly decodes provider JSON into a complete Analysis.
-// A model-provided total_score is accepted for compatibility but intentionally
-// discarded: only scoring.Calculate owns the final total.
+// ParseAndValidate strictly decodes provider JSON into a complete Analysis using default scoring criteria.
 func ParseAndValidate(raw []byte) (Analysis, error) {
+	return ParseAndValidateWithCriteria(raw, scoring.Criteria())
+}
+
+// ParseAndValidateWithCriteria decodes provider JSON and validates against the specified criteria list.
+func ParseAndValidateWithCriteria(raw []byte, criteriaList []scoring.Criterion) (Analysis, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return Analysis{}, fmt.Errorf("decode analysis JSON: %w", err)
@@ -73,7 +77,7 @@ func ParseAndValidate(raw []byte) (Analysis, error) {
 	if err := validateCriterionResultFields(fields["criterion_results"]); err != nil {
 		return Analysis{}, err
 	}
-	if _, err := scoring.Calculate(payload.CriterionResults); err != nil {
+	if _, err := scoring.CalculateWithCriteria(payload.CriterionResults, criteriaList); err != nil {
 		return Analysis{}, fmt.Errorf("validate criterion results: %w", err)
 	}
 
@@ -88,6 +92,7 @@ func ParseAndValidate(raw []byte) (Analysis, error) {
 
 	return Analysis{
 		Summary:            payload.Summary,
+		DetectedLanguage:   payload.DetectedLanguage,
 		Needs:              payload.Needs,
 		Objections:         payload.Objections,
 		RefusalReason:      payload.RefusalReason,

@@ -3,6 +3,8 @@ package analysis
 import (
 	"encoding/json"
 	"testing"
+
+	"call_analyse_backend/internal/modules/scoring"
 )
 
 func TestParseAndValidateAcceptsAllDefinedFieldsAndIgnoresModelTotal(t *testing.T) {
@@ -80,6 +82,39 @@ func TestParseAndValidateAcceptsEnrichedSpeechAnalyticsAndViolations(t *testing.
 	}
 	if len(result.ActionableCoaching) != 1 {
 		t.Errorf("ActionableCoaching = %+v, want 1 recommendation", result.ActionableCoaching)
+	}
+}
+
+func TestParseAndValidateAcceptsDetectedLanguageAndCustomCriteria(t *testing.T) {
+	customCriteria := []scoring.Criterion{
+		{Key: "custom_kpi", Max: 50},
+		{Key: "custom_closure", Max: 50},
+	}
+	payload := map[string]any{
+		"summary":           "Қоңырау қазақ тілінде өтті.",
+		"detected_language": "kk",
+		"needs":             []string{"Жеке ұсыныс"},
+		"objections":        []string{"Бағасы жоғары"},
+		"refusal_reason":    nil,
+		"mistakes":          []string{"Сұрақтар аз қойылды"},
+		"strengths":         []string{"Жақсы байланыс"},
+		"next_action":       "Келесі аптада хабарласу",
+		"criterion_results": map[string]any{
+			"custom_kpi":     map[string]any{"score": 40, "feedback": "Жақсы орындалды"},
+			"custom_closure": map[string]any{"score": 45, "feedback": "Сәтті аяқталды"},
+		},
+	}
+	raw := marshalAnalysisPayload(t, payload)
+
+	result, err := ParseAndValidateWithCriteria(raw, customCriteria)
+	if err != nil {
+		t.Fatalf("ParseAndValidateWithCriteria() error = %v", err)
+	}
+	if result.DetectedLanguage != "kk" {
+		t.Errorf("DetectedLanguage = %q, want kk", result.DetectedLanguage)
+	}
+	if len(result.CriterionResults) != 2 {
+		t.Errorf("CriterionResults len = %d, want 2", len(result.CriterionResults))
 	}
 }
 

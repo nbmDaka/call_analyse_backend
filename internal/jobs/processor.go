@@ -13,6 +13,7 @@ import (
 
 	"call_analyse_backend/internal/modules/analysis"
 	"call_analyse_backend/internal/modules/calls"
+	"call_analyse_backend/internal/modules/playbooks"
 	"call_analyse_backend/internal/modules/scoring"
 	"call_analyse_backend/internal/modules/transcription"
 	"call_analyse_backend/internal/platform/storage"
@@ -27,6 +28,8 @@ type (
 	TranscriptStore = transcription.TranscriptStore
 	// AnalysisStore persists the analysis and calculated score together.
 	AnalysisStore = analysis.AnalysisStore
+	// PlaybookStore persists workspace playbooks.
+	PlaybookStore = playbooks.Store
 )
 
 const (
@@ -40,6 +43,7 @@ type Processor struct {
 	Calls           CallProcessingStore
 	Transcripts     TranscriptStore
 	Analyses        AnalysisStore
+	Playbooks       PlaybookStore
 	Transcriber     transcription.TranscriptionProvider
 	Analyzer        analysis.AnalysisProvider
 	Objects         storage.ObjectStore
@@ -209,20 +213,55 @@ func (p *Processor) process(ctx context.Context, workspaceID uuid.UUID, callID s
 					p.log().Error("transcript not found for analysis", "call_id", id, "workspace_id", workspaceID, "error", err)
 					return p.fail(ctx, workspaceID, id, call, processingFailure)
 				}
+
+				scoringCriteria := scoring.Criteria()
+				var analysisOpts []analysis.Options
+
+				if p.Playbooks != nil {
+					var pb playbooks.Playbook
+					var pbErr error
+					if call.PlaybookID != nil && *call.PlaybookID != uuid.Nil {
+						pb, pbErr = p.Playbooks.GetByID(ctx, workspaceID, *call.PlaybookID)
+					} else if workspaceID != uuid.Nil {
+						pb, pbErr = p.Playbooks.GetDefault(ctx, workspaceID)
+					}
+					if pbErr == nil && len(pb.Criteria) > 0 {
+						var details []analysis.CriterionDetail
+						var dynamicScoring []scoring.Criterion
+						for _, c := range pb.Criteria {
+							details = append(details, analysis.CriterionDetail{
+								Key:         c.Key,
+								Title:       c.Title,
+								Description: c.Description,
+								MaxScore:    c.MaxScore,
+							})
+							dynamicScoring = append(dynamicScoring, scoring.Criterion{
+								Key: c.Key,
+								Max: c.MaxScore,
+							})
+						}
+						analysisOpts = append(analysisOpts, analysis.Options{
+							Criteria: details,
+						})
+						scoringCriteria = dynamicScoring
+						p.log().Info("using custom workspace playbook for analysis", "playbook_id", pb.ID, "criteria_count", len(details))
+					}
+				}
+
 				p.log().Info("starting analysis with AI provider", "call_id", id, "workspace_id", workspaceID)
-				result, err := p.analyze(ctx, transcript)
+				result, err := p.analyze(ctx, transcript, analysisOpts...)
 				if err != nil {
 					p.log().Error("analysis provider failed", "call_id", id, "workspace_id", workspaceID, "error", err)
 					return p.fail(ctx, workspaceID, id, call, analysisProviderFailure)
 				}
-				validated, err := validateAnalysis(result)
+				validated, err := validateAnalysis(result, scoringCriteria)
 				if err != nil {
 					p.log().Error("analysis validation failed", "call_id", id, "workspace_id", workspaceID, "error", err, "raw_analysis", result.RawJSON)
 					return p.fail(ctx, workspaceID, id, call, analysisProviderFailure)
 				}
-				p.log().Info("analysis validated successfully", "call_id", id, "workspace_id", workspaceID)
+				p.log().Info("analysis validated successfully", "call_id", id, "workspace_id", workspaceID, "detected_language", validated.DetectedLanguage)
 
-				score, err := scoring.Calculate(validated.CriterionResults)
+				score, err := scoring.CalculateWithCriteria(validated.CriterionResults, scoringCriteria)
 				if err != nil {
 					p.log().Error("score calculation failed", "call_id", id, "workspace_id", workspaceID, "error", err)
 					return p.fail(ctx, workspaceID, id, call, analysisProviderFailure)
@@ -318,14 +357,14 @@ func (p *Processor) transcribe(ctx context.Context, call calls.Call) (transcript
 	})
 }
 
-func (p *Processor) analyze(ctx context.Context, transcript transcription.Transcript) (analysis.Analysis, error) {
+func (p *Processor) analyze(ctx context.Context, transcript transcription.Transcript, opts ...analysis.Options) (analysis.Analysis, error) {
 	providerCtx, cancel := context.WithTimeout(ctx, p.ProviderTimeout)
 	defer cancel()
 	p.log().Info("sending transcript to analysis provider", "transcript_chars", len(transcript.Text))
-	return p.Analyzer.Analyze(providerCtx, transcript)
+	return p.Analyzer.Analyze(providerCtx, transcript, opts...)
 }
 
-func validateAnalysis(result analysis.Analysis) (analysis.Analysis, error) {
+func validateAnalysis(result analysis.Analysis, criteria []scoring.Criterion) (analysis.Analysis, error) {
 	raw := result.RawJSON
 	if len(raw) == 0 {
 		encoded, err := json.Marshal(result)
@@ -334,5 +373,5 @@ func validateAnalysis(result analysis.Analysis) (analysis.Analysis, error) {
 		}
 		raw = encoded
 	}
-	return analysis.ParseAndValidate(raw)
+	return analysis.ParseAndValidateWithCriteria(raw, criteria)
 }

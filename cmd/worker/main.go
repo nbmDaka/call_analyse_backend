@@ -10,6 +10,7 @@ import (
 
 	"call_analyse_backend/internal/modules/analysis"
 	"call_analyse_backend/internal/modules/calls"
+	"call_analyse_backend/internal/modules/playbooks"
 	"call_analyse_backend/internal/config"
 	"call_analyse_backend/internal/platform/database"
 	"call_analyse_backend/internal/integrations/ai"
@@ -57,6 +58,7 @@ func main() {
 		Calls:           calls.NewPostgresStore(pool),
 		Transcripts:     transcription.NewPostgresStore(pool),
 		Analyses:        analysis.NewPostgresStore(pool),
+		Playbooks:       playbooks.NewPostgresStore(pool),
 		Transcriber:     transcriber,
 		Analyzer:        analyzer,
 		Objects:         objects,
