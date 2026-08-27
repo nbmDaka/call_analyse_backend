@@ -148,40 +148,71 @@ func (g *Gemini) generate(ctx context.Context, model string, request geminiGener
 		g.log().Error("failed to marshal Gemini request payload", "error", err)
 		return "", ErrGeminiRequest
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.endpoint(model), bytes.NewReader(body))
-	if err != nil {
-		g.log().Error("failed to create HTTP request for Gemini", "error", err)
-		return "", ErrGeminiRequest
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-goog-api-key", g.apiKey)
 
-	response, err := g.httpClient.Do(req)
-	if err != nil {
-		g.log().Error("Gemini HTTP call failed", "model", model, "error", err)
-		return "", ErrGeminiRequest
+	maxAttempts := 3
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.endpoint(model), bytes.NewReader(body))
+		if err != nil {
+			g.log().Error("failed to create HTTP request for Gemini", "error", err)
+			return "", ErrGeminiRequest
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-goog-api-key", g.apiKey)
+
+		response, err := g.httpClient.Do(req)
+		if err != nil {
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
+			g.log().Error("Gemini HTTP call failed", "model", model, "attempt", attempt, "error", err)
+			if attempt < maxAttempts {
+				select {
+				case <-ctx.Done():
+					return "", ctx.Err()
+				case <-time.After(time.Duration(attempt) * time.Second):
+					continue
+				}
+			}
+			return "", ErrGeminiRequest
+		}
+		responseBody, readErr := io.ReadAll(response.Body)
+		response.Body.Close()
+		if readErr != nil {
+			g.log().Error("failed to read Gemini response body", "model", model, "error", readErr)
+			return "", ErrGeminiRequest
+		}
+
+		if response.StatusCode == http.StatusServiceUnavailable || response.StatusCode == http.StatusTooManyRequests || response.StatusCode == http.StatusGatewayTimeout {
+			g.log().Warn("Gemini temporary error, retrying", "model", model, "attempt", attempt, "status", response.StatusCode, "body", string(responseBody))
+			if attempt < maxAttempts {
+				select {
+				case <-ctx.Done():
+					return "", ctx.Err()
+				case <-time.After(time.Duration(attempt) * time.Second):
+					continue
+				}
+			}
+			return "", fmt.Errorf("%w: status %d", ErrGeminiRequest, response.StatusCode)
+		}
+
+		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+			g.log().Error("Gemini returned non-2xx status code", "model", model, "status", response.StatusCode, "body", string(responseBody))
+			return "", fmt.Errorf("%w: status %d", ErrGeminiRequest, response.StatusCode)
+		}
+
+		var decoded geminiGenerateContentResponse
+		if err := json.Unmarshal(responseBody, &decoded); err != nil {
+			g.log().Error("failed to unmarshal Gemini JSON response", "model", model, "error", err, "body", string(responseBody))
+			return "", ErrGeminiRequest
+		}
+		text := decoded.text()
+		if text == "" {
+			g.log().Error("Gemini response contained no candidate parts", "model", model, "body", string(responseBody))
+			return "", ErrGeminiRequest
+		}
+		return text, nil
 	}
-	defer response.Body.Close()
-	responseBody, err := io.ReadAll(response.Body)
-	if err != nil {
-		g.log().Error("failed to read Gemini response body", "model", model, "error", err)
-		return "", ErrGeminiRequest
-	}
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		g.log().Error("Gemini returned non-2xx status code", "model", model, "status", response.StatusCode, "body", string(responseBody))
-		return "", fmt.Errorf("%w: status %d", ErrGeminiRequest, response.StatusCode)
-	}
-	var decoded geminiGenerateContentResponse
-	if err := json.Unmarshal(responseBody, &decoded); err != nil {
-		g.log().Error("failed to unmarshal Gemini JSON response", "model", model, "error", err, "body", string(responseBody))
-		return "", ErrGeminiRequest
-	}
-	text := decoded.text()
-	if text == "" {
-		g.log().Error("Gemini response contained no candidate parts", "model", model, "body", string(responseBody))
-		return "", ErrGeminiRequest
-	}
-	return text, nil
+	return "", ErrGeminiRequest
 }
 
 func (g *Gemini) endpoint(model string) string {

@@ -64,7 +64,11 @@ FROM call_transcripts t`
 
 // Upsert records the durable transcription checkpoint before analysis starts.
 func (s *PostgresStore) Upsert(ctx context.Context, callID uuid.UUID, transcript Transcript) error {
-	segmentsJSON, err := json.Marshal(transcript.Segments)
+	segments := transcript.Segments
+	if segments == nil {
+		segments = []Segment{}
+	}
+	segmentsJSON, err := json.Marshal(segments)
 	if err != nil {
 		return fmt.Errorf("encode transcript segments: %w", err)
 	}
