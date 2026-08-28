@@ -72,9 +72,11 @@ func NewRouter(deps Dependencies) http.Handler {
 			protected.Get("/platform/workspaces", s.platformWorkspaces)
 			protected.Post("/platform/workspaces", s.platformCreateWorkspace)
 			protected.Get("/platform/users", s.platformUsers)
+			protected.Get("/platform/calls", s.platformCalls)
 			protected.Get("/platform/metrics", s.platformMetrics)
 			protected.Patch("/platform/workspaces/{workspaceID}/status", s.platformWorkspaceStatus)
 			protected.Patch("/platform/users/{userID}/status", s.platformUserStatus)
+			protected.Patch("/platform/users/{userID}/role", s.platformUserRole)
 			// Deprecated compatibility routes. New clients must use explicit workspace routes.
 			protected.Post("/calls", s.createCall)
 			protected.Get("/calls", s.listCalls)

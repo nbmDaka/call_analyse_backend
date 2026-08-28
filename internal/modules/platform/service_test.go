@@ -23,3 +23,18 @@ func TestSuperAdminCannotSuspendSelf(t *testing.T) {
 		t.Fatalf("SetUserStatus(self) error = %v, want forbidden", err)
 	}
 }
+
+func TestSuperAdminCannotChangeOwnRole(t *testing.T) {
+	userID := uuid.New()
+	service := NewService(nil)
+	if _, err := service.SetUserPlatformRole(context.Background(), userID, workspaces.PlatformRoleSuperAdmin, userID, workspaces.PlatformRoleUser); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("SetUserPlatformRole(self) error = %v, want forbidden", err)
+	}
+}
+
+func TestPlatformCallsRequiresSuperAdmin(t *testing.T) {
+	service := NewService(nil)
+	if _, err := service.ListCalls(context.Background(), workspaces.PlatformRoleUser, CallListFilter{}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("ListCalls(user) error = %v, want forbidden", err)
+	}
+}

@@ -61,6 +61,8 @@ type platformService interface {
 	ListUsers(context.Context, workspaces.PlatformRole) ([]platformadmin.User, error)
 	SetWorkspaceStatus(context.Context, uuid.UUID, workspaces.PlatformRole, uuid.UUID, workspaces.Status) (workspaces.Workspace, error)
 	SetUserStatus(context.Context, uuid.UUID, workspaces.PlatformRole, uuid.UUID, string) (platformadmin.User, error)
+	SetUserPlatformRole(context.Context, uuid.UUID, workspaces.PlatformRole, uuid.UUID, workspaces.PlatformRole) (platformadmin.User, error)
+	ListCalls(context.Context, workspaces.PlatformRole, platformadmin.CallListFilter) (platformadmin.CallListPage, error)
 	SystemMetrics(context.Context, workspaces.PlatformRole) (platformadmin.Metrics, error)
 }
 
