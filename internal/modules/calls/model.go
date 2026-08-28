@@ -32,15 +32,17 @@ type Call struct {
 	OwnerUserID      uuid.UUID `json:"owner_user_id"`
 	UploadedByUserID uuid.UUID `json:"uploaded_by_user_id"`
 	ManagerID        uuid.UUID `json:"manager_id"` // Deprecated compatibility field.
+	ManagerEmail     string    `json:"manager_email,omitempty"`
 	Status           Status    `json:"status"`
 	OriginalFilename string    `json:"original_filename"`
 	ObjectKey        string    `json:"object_key,omitempty"`
 	ContentType      string    `json:"content_type"`
-	SizeBytes        int64     `json:"size_bytes"`
-	DurationSeconds  *int      `json:"duration_seconds,omitempty"`
-	ErrorMessage     *string   `json:"error_message,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	SizeBytes        int64      `json:"size_bytes"`
+	DurationSeconds  *int       `json:"duration_seconds,omitempty"`
+	PlaybookID       *uuid.UUID `json:"playbook_id,omitempty"`
+	ErrorMessage     *string    `json:"error_message,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 // CallDetail is the API read model. Result fields are nullable because a call

@@ -136,7 +136,16 @@ func (s server) listCalls(w http.ResponseWriter, r *http.Request) {
 		writeInvalid(w, r, "invalid pagination")
 		return
 	}
-	result, err := s.deps.Calls.List(r.Context(), actor, calls.Page{Number: page, Size: size})
+	var managerID *uuid.UUID
+	if value := r.URL.Query().Get("manager_id"); value != "" {
+		if parsed, parseErr := uuid.Parse(value); parseErr == nil {
+			managerID = &parsed
+		} else {
+			writeInvalid(w, r, "invalid manager_id")
+			return
+		}
+	}
+	result, err := s.deps.Calls.List(r.Context(), actor, calls.Page{Number: page, Size: size, ManagerID: managerID})
 	if err != nil {
 		if isPaginationError(err) {
 			writeInvalid(w, r, "invalid pagination")

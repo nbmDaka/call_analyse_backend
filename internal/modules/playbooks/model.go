@@ -29,6 +29,7 @@ type Playbook struct {
 	Criteria    []Criterion `json:"criteria"`
 	CreatedAt   time.Time   `json:"created_at"`
 	UpdatedAt   time.Time   `json:"updated_at"`
+	DeletedAt   *time.Time  `json:"deleted_at,omitempty"`
 }
 
 // Validate ensures a playbook has a valid name and valid criteria.

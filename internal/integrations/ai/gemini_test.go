@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"call_analyse_backend/internal/modules/analysis"
 	"call_analyse_backend/internal/modules/scoring"
 	"call_analyse_backend/internal/modules/transcription"
 )
@@ -110,6 +111,54 @@ func TestGeminiAnalyzeUsesConfiguredModelAndExtractsJSON(t *testing.T) {
 	}
 	if result.Summary != "Summary" || result.NextAction != "Send quote" || result.CriterionResults["greeting"].Score != 5 {
 		t.Errorf("Analyze() = %#v, want extracted structured analysis", result)
+	}
+}
+
+func TestGeminiAnalyzeWithCustomCriteriaAndLanguage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request geminiGenerateContentRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		promptText := request.Contents[0].Parts[0].Text
+		if !strings.Contains(promptText, "custom_intro") || !strings.Contains(promptText, "Вводная часть") {
+			t.Error("prompt does not contain dynamic criterion custom_intro")
+		}
+		customJSON := map[string]any{
+			"summary":           "Қоңырау қазақша өтті.",
+			"detected_language": "kk",
+			"needs":             []string{"қажеттілік"},
+			"objections":        []string{"жоқ"},
+			"refusal_reason":    nil,
+			"mistakes":          []string{"қателік жоқ"},
+			"strengths":         []string{"өте жақсы"},
+			"next_action":       "хабарласу",
+			"criterion_results": map[string]any{
+				"custom_intro": map[string]any{"score": 50, "feedback": "Жақсы"},
+				"custom_pitch": map[string]any{"score": 50, "feedback": "Керемет"},
+			},
+		}
+		raw, _ := json.Marshal(customJSON)
+		writeGeminiText(t, w, string(raw))
+	}))
+	defer server.Close()
+
+	provider := newTestGemini(t, server.URL, time.Second)
+	opts := analysis.Options{
+		Criteria: []analysis.CriterionDetail{
+			{Key: "custom_intro", Title: "Вводная часть", MaxScore: 50, Description: "Поздороваться"},
+			{Key: "custom_pitch", Title: "Презентация", MaxScore: 50, Description: "Рассказать о продукте"},
+		},
+	}
+	result, err := provider.Analyze(context.Background(), transcription.TranscriptResult{Text: "Сәлеметсіз бе"}, opts)
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+	if result.DetectedLanguage != "kk" {
+		t.Errorf("DetectedLanguage = %q, want kk", result.DetectedLanguage)
+	}
+	if result.CriterionResults["custom_intro"].Score != 50 {
+		t.Errorf("custom_intro score = %d, want 50", result.CriterionResults["custom_intro"].Score)
 	}
 }
 

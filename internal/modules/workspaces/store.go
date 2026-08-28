@@ -15,6 +15,7 @@ type Store interface {
 	GetForUser(context.Context, uuid.UUID, uuid.UUID) (AvailableWorkspace, error)
 	CreateCompany(context.Context, uuid.UUID, string) (AvailableWorkspace, error)
 	Rename(context.Context, uuid.UUID, string) (Workspace, error)
+	Delete(context.Context, uuid.UUID) error
 }
 
 type ActorResolver interface {
@@ -32,7 +33,7 @@ SELECT w.id, w.name, w.type, w.status, w.owner_user_id, w.created_at, w.updated_
 FROM workspace_memberships m
 JOIN workspaces w ON w.id = m.workspace_id
 JOIN users u ON u.id = m.user_id
-WHERE m.user_id = $1 AND u.status = 'active'
+WHERE m.user_id = $1 AND u.status = 'active' AND w.status != 'deleted' AND w.deleted_at IS NULL
 ORDER BY CASE WHEN w.type = 'personal' THEN 0 ELSE 1 END, w.created_at, w.id`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list workspaces: %w", err)
@@ -56,7 +57,7 @@ SELECT w.id, w.name, w.type, w.status, w.owner_user_id, w.created_at, w.updated_
 FROM workspace_memberships m
 JOIN workspaces w ON w.id = m.workspace_id
 JOIN users u ON u.id = m.user_id
-WHERE m.user_id = $1 AND m.workspace_id = $2 AND u.status = 'active'`, userID, workspaceID))
+WHERE m.user_id = $1 AND m.workspace_id = $2 AND u.status = 'active' AND w.status != 'deleted' AND w.deleted_at IS NULL`, userID, workspaceID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AvailableWorkspace{}, ErrWorkspaceNotFound
 	}
@@ -72,7 +73,7 @@ SELECT m.id, m.role, m.status, w.status, w.type, u.status
 FROM workspace_memberships m
 JOIN workspaces w ON w.id = m.workspace_id
 JOIN users u ON u.id = m.user_id
-WHERE m.user_id = $1 AND m.workspace_id = $2`, userID, workspaceID).Scan(
+WHERE m.user_id = $1 AND m.workspace_id = $2 AND w.status != 'deleted' AND w.deleted_at IS NULL`, userID, workspaceID).Scan(
 		&actor.MembershipID, &actor.WorkspaceRole, &actor.MembershipStatus, &actor.WorkspaceStatus, &actor.WorkspaceType, &userStatus,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -118,7 +119,7 @@ RETURNING created_at, updated_at`, membership.ID, workspace.ID, ownerUserID).Sca
 func (s *PostgresStore) Rename(ctx context.Context, workspaceID uuid.UUID, name string) (Workspace, error) {
 	var workspace Workspace
 	err := s.pool.QueryRow(ctx, `
-UPDATE workspaces SET name = $2, updated_at = NOW() WHERE id = $1
+UPDATE workspaces SET name = $2, updated_at = NOW() WHERE id = $1 AND status != 'deleted' AND deleted_at IS NULL
 RETURNING id, name, type, status, owner_user_id, created_at, updated_at`, workspaceID, name).Scan(
 		&workspace.ID, &workspace.Name, &workspace.Type, &workspace.Status, &workspace.OwnerUserID, &workspace.CreatedAt, &workspace.UpdatedAt,
 	)
@@ -126,6 +127,20 @@ RETURNING id, name, type, status, owner_user_id, created_at, updated_at`, worksp
 		return Workspace{}, ErrWorkspaceNotFound
 	}
 	return workspace, err
+}
+
+func (s *PostgresStore) Delete(ctx context.Context, workspaceID uuid.UUID) error {
+	result, err := s.pool.Exec(ctx, `
+UPDATE workspaces
+SET status = 'deleted', deleted_at = NOW(), updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL`, workspaceID)
+	if err != nil {
+		return fmt.Errorf("delete workspace: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return ErrWorkspaceNotFound
+	}
+	return nil
 }
 
 type rowScanner interface{ Scan(...any) error }

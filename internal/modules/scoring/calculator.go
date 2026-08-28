@@ -17,8 +17,24 @@ type Score struct {
 // Calculate validates the complete fixed scoring contract and calculates a total
 // from criterion maxima defined by Criteria. It never accepts a caller total.
 func Calculate(scores map[string]CriterionScore) (Score, error) {
+	return CalculateWithCriteria(scores, Criteria())
+}
+
+// CalculateWithCriteria validates criterion scores against any slice of criteria.
+func CalculateWithCriteria(scores map[string]CriterionScore, criteriaList []Criterion) (Score, error) {
+	if len(criteriaList) == 0 {
+		criteriaList = Criteria()
+	}
+
+	byKey := make(map[string]Criterion, len(criteriaList))
+	totalMax := 0
+	for _, c := range criteriaList {
+		byKey[c.Key] = c
+		totalMax += c.Max
+	}
+
 	for key, score := range scores {
-		criterion, ok := criteriaByKey[key]
+		criterion, ok := byKey[key]
 		if !ok {
 			return Score{}, fmt.Errorf("unknown score criterion %q", key)
 		}
@@ -28,8 +44,8 @@ func Calculate(scores map[string]CriterionScore) (Score, error) {
 	}
 
 	total := 0
-	validated := make(map[string]CriterionScore, len(criteria))
-	for _, criterion := range Criteria() {
+	validated := make(map[string]CriterionScore, len(criteriaList))
+	for _, criterion := range criteriaList {
 		score, ok := scores[criterion.Key]
 		if !ok {
 			return Score{}, fmt.Errorf("score for required criterion %q is missing", criterion.Key)
@@ -37,8 +53,8 @@ func Calculate(scores map[string]CriterionScore) (Score, error) {
 		validated[criterion.Key] = score
 		total += score.Score
 	}
-	if total > 100 {
-		return Score{}, fmt.Errorf("total score must not exceed 100")
+	if total > totalMax || (totalMax <= 100 && total > 100) {
+		return Score{}, fmt.Errorf("total score must not exceed maximum possible score")
 	}
 
 	return Score{Criteria: validated, Total: total}, nil

@@ -18,8 +18,8 @@ type RoleMapping struct {
 
 // TalkToListenRatio represents the proportion of speech time between manager and client.
 type TalkToListenRatio struct {
-	ManagerPercentage int `json:"manager_percentage"`
-	ClientPercentage  int `json:"client_percentage"`
+	ManagerPercentage float64 `json:"manager_percentage"`
+	ClientPercentage  float64 `json:"client_percentage"`
 }
 
 // AwkwardPause records dead air or prolonged hesitation in seconds.
@@ -63,6 +63,7 @@ type Violation struct {
 // Analysis is the validated structured analysis produced from a call transcript or audio.
 type Analysis struct {
 	Summary            string                     `json:"summary"`
+	DetectedLanguage   string                     `json:"detected_language,omitempty"`
 	Needs              []string                   `json:"needs"`
 	Objections         []string                   `json:"objections"`
 	RefusalReason      *string                    `json:"refusal_reason"`

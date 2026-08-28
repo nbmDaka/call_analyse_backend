@@ -10,6 +10,7 @@ import (
 
 	"call_analyse_backend/internal/modules/analysis"
 	"call_analyse_backend/internal/modules/calls"
+	"call_analyse_backend/internal/modules/playbooks"
 	"call_analyse_backend/internal/config"
 	"call_analyse_backend/internal/platform/database"
 	"call_analyse_backend/internal/integrations/ai"
@@ -47,7 +48,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	transcriber, analyzer, err := workerProviders(cfg)
+	transcriber, analyzer, err := workerProviders(cfg, logger)
 	if err != nil {
 		logger.Error("worker provider startup failed", "error", err)
 		os.Exit(1)
@@ -57,10 +58,12 @@ func main() {
 		Calls:           calls.NewPostgresStore(pool),
 		Transcripts:     transcription.NewPostgresStore(pool),
 		Analyses:        analysis.NewPostgresStore(pool),
+		Playbooks:       playbooks.NewPostgresStore(pool),
 		Transcriber:     transcriber,
 		Analyzer:        analyzer,
 		Objects:         objects,
 		ProviderTimeout: cfg.ProviderTimeout,
+		Logger:          logger,
 	}
 	mux := asynq.NewServeMux()
 	mux.Handle(queue.TypeProcessCall, worker.NewHandler(processor))
@@ -79,7 +82,7 @@ func main() {
 	server.Shutdown()
 }
 
-func workerProviders(cfg config.Config) (transcription.TranscriptionProvider, analysis.AnalysisProvider, error) {
+func workerProviders(cfg config.Config, logger *slog.Logger) (transcription.TranscriptionProvider, analysis.AnalysisProvider, error) {
 	switch cfg.AIMode {
 	case config.AIModeFake:
 		return transcription.FakeProvider{}, providers.FakeAnalysisProvider{}, nil
@@ -89,6 +92,7 @@ func workerProviders(cfg config.Config) (transcription.TranscriptionProvider, an
 			TranscriptionModel: cfg.GeminiTranscriptionModel,
 			AnalysisModel:      cfg.GeminiAnalysisModel,
 			Timeout:            cfg.ProviderTimeout,
+			Logger:             logger,
 		})
 		if err != nil {
 			return nil, nil, err

@@ -23,7 +23,7 @@ type CallProcessingStore interface {
 func (s *PostgresStore) Get(ctx context.Context, callID uuid.UUID) (Call, error) {
 	call, err := scanCall(s.pool.QueryRow(ctx, `
 SELECT id, workspace_id, owner_user_id, uploaded_by_user_id, manager_id, status, original_filename, object_key, content_type, size_bytes,
-       duration_seconds, error_message, created_at, updated_at
+       duration_seconds, playbook_id, error_message, created_at, updated_at
 FROM calls
 WHERE id = $1`, callID))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -35,7 +35,7 @@ WHERE id = $1`, callID))
 func (s *PostgresStore) GetInWorkspace(ctx context.Context, workspaceID, callID uuid.UUID) (Call, error) {
 	call, err := scanCall(s.pool.QueryRow(ctx, `
 SELECT id, workspace_id, owner_user_id, uploaded_by_user_id, manager_id, status, original_filename, object_key, content_type, size_bytes,
-       duration_seconds, error_message, created_at, updated_at
+       duration_seconds, playbook_id, error_message, created_at, updated_at
 FROM calls WHERE id = $1 AND workspace_id = $2`, callID, workspaceID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Call{}, ErrCallNotFound

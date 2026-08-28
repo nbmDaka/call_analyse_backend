@@ -158,23 +158,43 @@ FROM call_scores s`
 // UpsertWithScore atomically records both result rows so a retry never observes
 // an analysis without its calculated backend score.
 func (s *PostgresStore) UpsertWithScore(ctx context.Context, callID uuid.UUID, result Analysis, score scoring.Score) error {
-	needsJSON, err := json.Marshal(result.Needs)
+	needs := result.Needs
+	if needs == nil {
+		needs = []string{}
+	}
+	needsJSON, err := json.Marshal(needs)
 	if err != nil {
 		return fmt.Errorf("encode analysis needs: %w", err)
 	}
-	objectionsJSON, err := json.Marshal(result.Objections)
+	objections := result.Objections
+	if objections == nil {
+		objections = []string{}
+	}
+	objectionsJSON, err := json.Marshal(objections)
 	if err != nil {
 		return fmt.Errorf("encode analysis objections: %w", err)
 	}
-	mistakesJSON, err := json.Marshal(result.Mistakes)
+	mistakes := result.Mistakes
+	if mistakes == nil {
+		mistakes = []string{}
+	}
+	mistakesJSON, err := json.Marshal(mistakes)
 	if err != nil {
 		return fmt.Errorf("encode analysis mistakes: %w", err)
 	}
-	strengthsJSON, err := json.Marshal(result.Strengths)
+	strengths := result.Strengths
+	if strengths == nil {
+		strengths = []string{}
+	}
+	strengthsJSON, err := json.Marshal(strengths)
 	if err != nil {
 		return fmt.Errorf("encode analysis strengths: %w", err)
 	}
-	criteriaJSON, err := json.Marshal(result.CriterionResults)
+	criteria := result.CriterionResults
+	if criteria == nil {
+		criteria = map[string]CriterionResult{}
+	}
+	criteriaJSON, err := json.Marshal(criteria)
 	if err != nil {
 		return fmt.Errorf("encode criterion results: %w", err)
 	}

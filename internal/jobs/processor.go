@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
 	"time"
 
 	"call_analyse_backend/internal/modules/analysis"
 	"call_analyse_backend/internal/modules/calls"
+	"call_analyse_backend/internal/modules/playbooks"
 	"call_analyse_backend/internal/modules/scoring"
 	"call_analyse_backend/internal/modules/transcription"
 	"call_analyse_backend/internal/platform/storage"
@@ -26,6 +28,8 @@ type (
 	TranscriptStore = transcription.TranscriptStore
 	// AnalysisStore persists the analysis and calculated score together.
 	AnalysisStore = analysis.AnalysisStore
+	// PlaybookStore persists workspace playbooks.
+	PlaybookStore = playbooks.Store
 )
 
 const (
@@ -39,15 +43,24 @@ type Processor struct {
 	Calls           CallProcessingStore
 	Transcripts     TranscriptStore
 	Analyses        AnalysisStore
+	Playbooks       PlaybookStore
 	Transcriber     transcription.TranscriptionProvider
 	Analyzer        analysis.AnalysisProvider
 	Objects         storage.ObjectStore
 	ProviderTimeout time.Duration
+	Logger          *slog.Logger
 
 	// callLocks serializes overlapping deliveries for one call within this
 	// worker process. Database conditional transitions and upserts remain
 	// necessary for duplicate deliveries handled by separate processes.
 	callLocks callLockRegistry
+}
+
+func (p *Processor) log() *slog.Logger {
+	if p.Logger != nil {
+		return p.Logger
+	}
+	return slog.Default()
 }
 
 type callLockRegistry struct {
@@ -106,10 +119,12 @@ func (p *Processor) ProcessInWorkspace(ctx context.Context, workspaceID, callID 
 
 func (p *Processor) process(ctx context.Context, workspaceID uuid.UUID, callID string) error {
 	if err := p.validate(); err != nil {
+		p.log().Error("worker processor validation failed", "call_id", callID, "workspace_id", workspaceID, "error", err)
 		return err
 	}
 	id, err := uuid.Parse(callID)
 	if err != nil {
+		p.log().Error("failed to parse call ID", "call_id", callID, "workspace_id", workspaceID, "error", err)
 		return fmt.Errorf("parse call ID: %w", err)
 	}
 	release := p.callLocks.Lock(id)
@@ -121,6 +136,7 @@ func (p *Processor) process(ctx context.Context, workspaceID uuid.UUID, callID s
 			GetInWorkspace(context.Context, uuid.UUID, uuid.UUID) (calls.Call, error)
 		})
 		if !ok {
+			p.log().Error("call store does not support workspace scope", "call_id", id, "workspace_id", workspaceID)
 			return errors.New("call store does not support workspace scope")
 		}
 		call, err = scoped.GetInWorkspace(ctx, workspaceID, id)
@@ -128,38 +144,55 @@ func (p *Processor) process(ctx context.Context, workspaceID uuid.UUID, callID s
 		call, err = p.Calls.Get(ctx, id)
 	}
 	if err != nil {
+		p.log().Error("failed to load call from database", "call_id", id, "workspace_id", workspaceID, "error", err)
 		return fmt.Errorf("load call: %w", err)
 	}
+
+	p.log().Info("call processing started",
+		"call_id", id,
+		"workspace_id", workspaceID,
+		"status", call.Status,
+		"filename", call.OriginalFilename,
+		"size_bytes", call.SizeBytes,
+		"content_type", call.ContentType,
+	)
 
 	for {
 		switch call.Status {
 		case calls.StatusCompleted:
+			p.log().Info("call is already completed", "call_id", id, "workspace_id", workspaceID)
 			return nil
 		case calls.StatusFailed:
+			p.log().Info("retrying failed call", "call_id", id, "workspace_id", workspaceID)
 			if err := p.transition(ctx, workspaceID, id, &call, calls.StatusQueued, nil); err != nil {
 				return err
 			}
-		case calls.StatusUploaded:
-			if err := p.transition(ctx, workspaceID, id, &call, calls.StatusTranscribing, nil); err != nil {
-				return err
-			}
-		case calls.StatusQueued:
+		case calls.StatusUploaded, calls.StatusQueued:
 			if err := p.transition(ctx, workspaceID, id, &call, calls.StatusTranscribing, nil); err != nil {
 				return err
 			}
 		case calls.StatusTranscribing:
 			transcript, exists, err := p.Transcripts.Get(ctx, id)
 			if err != nil {
+				p.log().Error("failed to check existing transcript", "call_id", id, "workspace_id", workspaceID, "error", err)
 				return p.fail(ctx, workspaceID, id, call, processingFailure)
 			}
 			if !exists {
+				p.log().Info("starting audio download and transcription", "call_id", id, "workspace_id", workspaceID, "object_key", call.ObjectKey)
 				transcript, err = p.transcribe(ctx, call)
 				if err != nil {
+					p.log().Error("transcription failed", "call_id", id, "workspace_id", workspaceID, "error", err)
 					return p.fail(ctx, workspaceID, id, call, transcriptionProviderFailure)
 				}
+				p.log().Info("transcription completed successfully", "call_id", id, "workspace_id", workspaceID, "transcript_chars", len(transcript.Text))
+
 				if err := p.Transcripts.Upsert(ctx, id, transcript); err != nil {
+					p.log().Error("failed to save transcript to database", "call_id", id, "workspace_id", workspaceID, "error", err)
 					return p.fail(ctx, workspaceID, id, call, processingFailure)
 				}
+				p.log().Info("transcript saved to database successfully", "call_id", id, "workspace_id", workspaceID)
+			} else {
+				p.log().Info("using existing transcript from database", "call_id", id, "workspace_id", workspaceID)
 			}
 			if err := p.transition(ctx, workspaceID, id, &call, calls.StatusTranscribed, nil); err != nil {
 				return err
@@ -171,33 +204,85 @@ func (p *Processor) process(ctx context.Context, workspaceID uuid.UUID, callID s
 		case calls.StatusAnalyzing:
 			exists, err := p.Analyses.Exists(ctx, id)
 			if err != nil {
+				p.log().Error("failed to check existing analysis", "call_id", id, "workspace_id", workspaceID, "error", err)
 				return p.fail(ctx, workspaceID, id, call, processingFailure)
 			}
 			if !exists {
 				transcript, transcriptExists, err := p.Transcripts.Get(ctx, id)
 				if err != nil || !transcriptExists {
+					p.log().Error("transcript not found for analysis", "call_id", id, "workspace_id", workspaceID, "error", err)
 					return p.fail(ctx, workspaceID, id, call, processingFailure)
 				}
-				result, err := p.analyze(ctx, transcript)
+
+				scoringCriteria := scoring.Criteria()
+				var analysisOpts []analysis.Options
+
+				if p.Playbooks != nil {
+					var pb playbooks.Playbook
+					var pbErr error
+					if call.PlaybookID != nil && *call.PlaybookID != uuid.Nil {
+						pb, pbErr = p.Playbooks.GetByID(ctx, workspaceID, *call.PlaybookID)
+					} else if workspaceID != uuid.Nil {
+						pb, pbErr = p.Playbooks.GetDefault(ctx, workspaceID)
+					}
+					if pbErr == nil && len(pb.Criteria) > 0 {
+						var details []analysis.CriterionDetail
+						var dynamicScoring []scoring.Criterion
+						for _, c := range pb.Criteria {
+							details = append(details, analysis.CriterionDetail{
+								Key:         c.Key,
+								Title:       c.Title,
+								Description: c.Description,
+								MaxScore:    c.MaxScore,
+							})
+							dynamicScoring = append(dynamicScoring, scoring.Criterion{
+								Key: c.Key,
+								Max: c.MaxScore,
+							})
+						}
+						analysisOpts = append(analysisOpts, analysis.Options{
+							Criteria: details,
+						})
+						scoringCriteria = dynamicScoring
+						p.log().Info("using custom workspace playbook for analysis", "playbook_id", pb.ID, "criteria_count", len(details))
+					}
+				}
+
+				p.log().Info("starting analysis with AI provider", "call_id", id, "workspace_id", workspaceID)
+				result, err := p.analyze(ctx, transcript, analysisOpts...)
 				if err != nil {
+					p.log().Error("analysis provider failed", "call_id", id, "workspace_id", workspaceID, "error", err)
 					return p.fail(ctx, workspaceID, id, call, analysisProviderFailure)
 				}
-				validated, err := validateAnalysis(result)
+				validated, err := validateAnalysis(result, scoringCriteria)
 				if err != nil {
+					p.log().Error("analysis validation failed", "call_id", id, "workspace_id", workspaceID, "error", err, "raw_analysis", result.RawJSON)
 					return p.fail(ctx, workspaceID, id, call, analysisProviderFailure)
 				}
-				score, err := scoring.Calculate(validated.CriterionResults)
+				p.log().Info("analysis validated successfully", "call_id", id, "workspace_id", workspaceID, "detected_language", validated.DetectedLanguage)
+
+				score, err := scoring.CalculateWithCriteria(validated.CriterionResults, scoringCriteria)
 				if err != nil {
+					p.log().Error("score calculation failed", "call_id", id, "workspace_id", workspaceID, "error", err)
 					return p.fail(ctx, workspaceID, id, call, analysisProviderFailure)
 				}
+				p.log().Info("scoring calculated successfully", "call_id", id, "workspace_id", workspaceID, "total_score", score.Total)
+
 				if err := p.Analyses.UpsertWithScore(ctx, id, validated, score); err != nil {
+					p.log().Error("failed to save analysis and score to database", "call_id", id, "workspace_id", workspaceID, "error", err)
 					return p.fail(ctx, workspaceID, id, call, processingFailure)
 				}
+				p.log().Info("analysis and score saved to database successfully", "call_id", id, "workspace_id", workspaceID)
+			} else {
+				p.log().Info("using existing analysis from database", "call_id", id, "workspace_id", workspaceID)
 			}
 			if err := p.transition(ctx, workspaceID, id, &call, calls.StatusCompleted, nil); err != nil {
 				return err
 			}
+			p.log().Info("call processing completed successfully", "call_id", id, "workspace_id", workspaceID)
+			return nil
 		default:
+			p.log().Error("unsupported call status encountered", "call_id", id, "workspace_id", workspaceID, "status", call.Status)
 			return fmt.Errorf("unsupported call status %q", call.Status)
 		}
 	}
@@ -215,6 +300,7 @@ func (p *Processor) validate() error {
 
 func (p *Processor) transition(ctx context.Context, workspaceID, callID uuid.UUID, call *calls.Call, to calls.Status, errorMessage *string) error {
 	var err error
+	from := call.Status
 	if workspaceID != uuid.Nil {
 		scoped, ok := p.Calls.(interface {
 			TransitionInWorkspace(context.Context, uuid.UUID, uuid.UUID, calls.Status, calls.Status, *string) error
@@ -227,14 +313,17 @@ func (p *Processor) transition(ctx context.Context, workspaceID, callID uuid.UUI
 		err = p.Calls.Transition(ctx, callID, call.Status, to, errorMessage)
 	}
 	if err != nil {
+		p.log().Error("failed to transition call status", "call_id", callID, "workspace_id", workspaceID, "from", from, "to", to, "error", err)
 		return fmt.Errorf("transition call to %q: %w", to, err)
 	}
 	call.Status = to
 	call.ErrorMessage = errorMessage
+	p.log().Info("call status transitioned", "call_id", callID, "workspace_id", workspaceID, "from", from, "to", to)
 	return nil
 }
 
 func (p *Processor) fail(ctx context.Context, workspaceID, callID uuid.UUID, call calls.Call, message string) error {
+	p.log().Error("marking call as failed", "call_id", callID, "workspace_id", workspaceID, "current_status", call.Status, "reason", message)
 	if call.Status != calls.StatusFailed {
 		if err := p.transition(ctx, workspaceID, callID, &call, calls.StatusFailed, &message); err != nil {
 			return err
@@ -244,17 +333,23 @@ func (p *Processor) fail(ctx context.Context, workspaceID, callID uuid.UUID, cal
 }
 
 func (p *Processor) transcribe(ctx context.Context, call calls.Call) (transcription.Transcript, error) {
+	p.log().Info("downloading audio from object storage", "call_id", call.ID, "object_key", call.ObjectKey)
 	reader, err := p.Objects.Get(ctx, call.ObjectKey)
 	if err != nil {
-		return transcription.Transcript{}, err
+		p.log().Error("failed to get audio object from storage", "call_id", call.ID, "object_key", call.ObjectKey, "error", err)
+		return transcription.Transcript{}, fmt.Errorf("get audio object: %w", err)
 	}
 	defer reader.Close()
 	data, err := io.ReadAll(reader)
 	if err != nil {
-		return transcription.Transcript{}, err
+		p.log().Error("failed to read audio data stream", "call_id", call.ID, "error", err)
+		return transcription.Transcript{}, fmt.Errorf("read audio data: %w", err)
 	}
+	p.log().Info("audio file downloaded successfully", "call_id", call.ID, "bytes", len(data), "filename", call.OriginalFilename)
+
 	providerCtx, cancel := context.WithTimeout(ctx, p.ProviderTimeout)
 	defer cancel()
+	p.log().Info("sending audio to transcription provider", "call_id", call.ID, "content_type", call.ContentType)
 	return p.Transcriber.Transcribe(providerCtx, transcription.AudioInput{
 		Filename: call.OriginalFilename,
 		MIMEType: call.ContentType,
@@ -262,13 +357,14 @@ func (p *Processor) transcribe(ctx context.Context, call calls.Call) (transcript
 	})
 }
 
-func (p *Processor) analyze(ctx context.Context, transcript transcription.Transcript) (analysis.Analysis, error) {
+func (p *Processor) analyze(ctx context.Context, transcript transcription.Transcript, opts ...analysis.Options) (analysis.Analysis, error) {
 	providerCtx, cancel := context.WithTimeout(ctx, p.ProviderTimeout)
 	defer cancel()
-	return p.Analyzer.Analyze(providerCtx, transcript)
+	p.log().Info("sending transcript to analysis provider", "transcript_chars", len(transcript.Text))
+	return p.Analyzer.Analyze(providerCtx, transcript, opts...)
 }
 
-func validateAnalysis(result analysis.Analysis) (analysis.Analysis, error) {
+func validateAnalysis(result analysis.Analysis, criteria []scoring.Criterion) (analysis.Analysis, error) {
 	raw := result.RawJSON
 	if len(raw) == 0 {
 		encoded, err := json.Marshal(result)
@@ -277,5 +373,5 @@ func validateAnalysis(result analysis.Analysis) (analysis.Analysis, error) {
 		}
 		raw = encoded
 	}
-	return analysis.ParseAndValidate(raw)
+	return analysis.ParseAndValidateWithCriteria(raw, criteria)
 }

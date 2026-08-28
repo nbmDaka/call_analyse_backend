@@ -44,3 +44,13 @@ func (s Service) Rename(ctx context.Context, actor Actor, name string) (Workspac
 	}
 	return s.store.Rename(ctx, actor.WorkspaceID, name)
 }
+
+func (s Service) Delete(ctx context.Context, actor Actor) error {
+	if !actor.HasWorkspaceAccess() || actor.WorkspaceRole != RoleOwner {
+		return ErrForbidden
+	}
+	if s.store == nil {
+		return ErrForbidden
+	}
+	return s.store.Delete(ctx, actor.WorkspaceID)
+}

@@ -30,16 +30,16 @@ func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
 // Create inserts metadata only after the caller has stored the object.
 func (s *PostgresStore) Create(ctx context.Context, call Call) (Call, error) {
 	return scanCall(s.pool.QueryRow(ctx, `
-INSERT INTO calls (id, workspace_id, owner_user_id, uploaded_by_user_id, manager_id, status, original_filename, object_key, content_type, size_bytes)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+INSERT INTO calls (id, workspace_id, owner_user_id, uploaded_by_user_id, manager_id, status, original_filename, object_key, content_type, size_bytes, playbook_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING id, workspace_id, owner_user_id, uploaded_by_user_id, manager_id, status, original_filename, object_key, content_type, size_bytes,
-          duration_seconds, error_message, created_at, updated_at`,
-		call.ID, call.WorkspaceID, call.OwnerUserID, call.UploadedByUserID, call.ManagerID, call.Status, call.OriginalFilename, call.ObjectKey, call.ContentType, call.SizeBytes))
+          duration_seconds, playbook_id, error_message, created_at, updated_at`,
+		call.ID, call.WorkspaceID, call.OwnerUserID, call.UploadedByUserID, call.ManagerID, call.Status, call.OriginalFilename, call.ObjectKey, call.ContentType, call.SizeBytes, call.PlaybookID))
 }
 
 // List applies actor scope in both total and row queries before applying pagination.
 func (s *PostgresStore) List(ctx context.Context, actor Actor, page Page) (CallPage, error) {
-	countQuery, countArgs, err := listCountQuery(actor)
+	countQuery, countArgs, err := listCountQuery(actor, page.ManagerID)
 	if err != nil {
 		return CallPage{}, err
 	}
@@ -61,7 +61,7 @@ func (s *PostgresStore) List(ctx context.Context, actor Actor, page Page) (CallP
 	pageResult := CallPage{Page: page.Number, PerPage: page.Size, Total: total}
 	pageResult.TotalPages = (total + page.Size - 1) / page.Size
 	for rows.Next() {
-		call, err := scanCall(rows)
+		call, err := scanCallWithEmail(rows)
 		if err != nil {
 			return CallPage{}, err
 		}
@@ -135,8 +135,8 @@ func (s *PostgresStore) DeleteInWorkspace(ctx context.Context, workspaceID, call
 	return err
 }
 
-func listCountQuery(actor Actor) (string, []any, error) {
-	where, args, err := listScope(actor)
+func listCountQuery(actor Actor, filterManagerID *uuid.UUID) (string, []any, error) {
+	where, args, err := listScope(actor, filterManagerID)
 	if err != nil {
 		return "", nil, err
 	}
@@ -144,7 +144,7 @@ func listCountQuery(actor Actor) (string, []any, error) {
 }
 
 func listQuery(actor Actor, page Page) (string, []any, error) {
-	where, args, err := listScope(actor)
+	where, args, err := listScope(actor, page.ManagerID)
 	if err != nil {
 		return "", nil, err
 	}
@@ -152,8 +152,10 @@ func listQuery(actor Actor, page Page) (string, []any, error) {
 	offsetPlaceholder := limitPlaceholder + 1
 	query := fmt.Sprintf(`
 SELECT c.id, c.workspace_id, c.owner_user_id, c.uploaded_by_user_id, c.manager_id, c.status, c.original_filename, c.object_key, c.content_type, c.size_bytes,
-       c.duration_seconds, c.error_message, c.created_at, c.updated_at
+       c.duration_seconds, c.playbook_id, c.error_message, c.created_at, c.updated_at,
+       COALESCE(u.email, '') AS manager_email
 FROM calls c
+LEFT JOIN users u ON u.id = c.owner_user_id
 WHERE %s
 ORDER BY c.created_at DESC
 LIMIT $%d OFFSET $%d`, where, limitPlaceholder, offsetPlaceholder)
@@ -168,22 +170,31 @@ func detailQuery(actor Actor, callID uuid.UUID) (string, []any, error) {
 	}
 	query := `
 SELECT c.id, c.workspace_id, c.owner_user_id, c.uploaded_by_user_id, c.manager_id, c.status, c.original_filename, c.object_key, c.content_type, c.size_bytes,
-       c.duration_seconds, c.error_message, c.created_at, c.updated_at
+       c.duration_seconds, c.playbook_id, c.error_message, c.created_at, c.updated_at
 FROM calls c
 WHERE c.id = $1 AND ` + where
 	return query, append([]any{callID}, args...), nil
 }
 
-func listScope(actor Actor) (string, []any, error) {
+func listScope(actor Actor, filterManagerID *uuid.UUID) (string, []any, error) {
 	if actor.WorkspaceID == uuid.Nil || actor.UserID == uuid.Nil || actor.MembershipID == uuid.Nil {
 		return "", nil, ErrInvalidActor
 	}
 	switch actor.WorkspaceRole {
 	case workspaces.RoleOwner, workspaces.RoleAdmin:
+		if filterManagerID != nil && *filterManagerID != uuid.Nil {
+			return "c.workspace_id = $1 AND c.owner_user_id = $2", []any{actor.WorkspaceID, *filterManagerID}, nil
+		}
 		return "c.workspace_id = $1", []any{actor.WorkspaceID}, nil
 	case workspaces.RoleManager:
 		return "c.workspace_id = $1 AND c.owner_user_id = $2", []any{actor.WorkspaceID, actor.UserID}, nil
 	case workspaces.RoleSupervisor:
+		if filterManagerID != nil && *filterManagerID != uuid.Nil {
+			return `c.workspace_id = $1 AND c.owner_user_id = $2 AND (c.owner_user_id = $3 OR c.owner_user_id IN (
+SELECT managed.user_id FROM workspace_memberships managed
+WHERE managed.workspace_id = $1 AND managed.supervisor_membership_id = $4
+  AND managed.role = 'manager' AND managed.status = 'active'))`, []any{actor.WorkspaceID, *filterManagerID, actor.UserID, actor.MembershipID}, nil
+		}
 		return `c.workspace_id = $1 AND (c.owner_user_id = $2 OR c.owner_user_id IN (
 SELECT managed.user_id FROM workspace_memberships managed
 WHERE managed.workspace_id = $1 AND managed.supervisor_membership_id = $3
@@ -194,7 +205,7 @@ WHERE managed.workspace_id = $1 AND managed.supervisor_membership_id = $3
 }
 
 func detailScope(actor Actor) (string, []any, error) {
-	where, args, err := listScope(actor)
+	where, args, err := listScope(actor, nil)
 	if err != nil {
 		return "", nil, err
 	}
@@ -223,9 +234,38 @@ func scanCall(row callRowScanner) (Call, error) {
 		&call.ContentType,
 		&call.SizeBytes,
 		&call.DurationSeconds,
+		&call.PlaybookID,
 		&call.ErrorMessage,
 		&call.CreatedAt,
 		&call.UpdatedAt,
+	)
+	if err != nil {
+		return Call{}, err
+	}
+	call.Status = Status(strings.ToLower(status))
+	return call, nil
+}
+
+func scanCallWithEmail(row callRowScanner) (Call, error) {
+	var call Call
+	var status string
+	err := row.Scan(
+		&call.ID,
+		&call.WorkspaceID,
+		&call.OwnerUserID,
+		&call.UploadedByUserID,
+		&call.ManagerID,
+		&status,
+		&call.OriginalFilename,
+		&call.ObjectKey,
+		&call.ContentType,
+		&call.SizeBytes,
+		&call.DurationSeconds,
+		&call.PlaybookID,
+		&call.ErrorMessage,
+		&call.CreatedAt,
+		&call.UpdatedAt,
+		&call.ManagerEmail,
 	)
 	if err != nil {
 		return Call{}, err
